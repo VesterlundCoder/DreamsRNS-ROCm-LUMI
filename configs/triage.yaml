@@ -1,0 +1,38 @@
+# =============================================================================
+# Delta triage configuration
+#
+# Controls which results are logged and which are escalated to full CRT.
+# =============================================================================
+
+# Stage 1: GPU/partial CRT screening
+# Only log trajectory-level results when delta exceeds this threshold.
+# delta > 0 means convergence is better than random.
+screening:
+  delta_threshold: 0.0
+  K_small: 6              # Primes for partial CRT
+  log_all_metadata: false  # If true, log metadata even for delta <= 0
+
+# Stage 2: CPU full CRT escalation
+# When delta > escalate_threshold, reconstruct full integer and verify
+# at high precision against all target constants.
+escalation:
+  delta_threshold: 0.0     # Escalate when partial CRT delta > this
+  targets:
+    - "zeta3"
+    - "zeta5"
+    - "zeta7"
+  mpmath_dps: 100          # Decimal places for verification
+  save_full_integers: true # Save p, q as strings in positives log
+
+# Stage 3: Positive classification
+# A result is classified as "positive" if the full CRT verification
+# confirms delta > positive_threshold.
+positive:
+  delta_threshold: 0.5     # High bar for confirmed positives
+  alert: true              # Print alert to stdout
+  separate_file: true      # Write to positives_rank{rank}.jsonl
+
+# Performance limits
+limits:
+  max_escalations_per_rank: 10000  # Safety cap per rank
+  max_positives_per_rank: 1000

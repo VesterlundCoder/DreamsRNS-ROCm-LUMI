@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "pybind11>=2.10"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rns-rocm"
+version = "0.2.0"
+description = "RNS-ROCm: Residue Number System library for exact modular arithmetic"
+readme = "../README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "VesterlundCoder"}
+]
+keywords = ["rns", "residue-number-system", "modular-arithmetic", "gpu", "rocm", "hip"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-benchmark",
+]
+sympy = [
+    "sympy>=1.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/VesterlundCoder/RNS-ROCm"
+Repository = "https://github.com/VesterlundCoder/RNS-ROCm"

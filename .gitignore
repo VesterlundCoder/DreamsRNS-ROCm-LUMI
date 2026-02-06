@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+dreams-venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs (generated at runtime)
+outputs/
+*.jsonl
+*.parquet
+
+# Build artifacts
+*.so
+*.o
+*.a
+
+# Checkpoints
+checkpoint_*.json
+
+# SLURM logs
+*.out
+*.err
+select_gpu.sh

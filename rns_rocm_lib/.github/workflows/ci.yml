@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-cpu:
+    name: Build and Test (CPU-only)
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libboost-dev
+    
+    - name: Configure CMake (CPU-only)
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DRNS_ENABLE_GPU=OFF
+    
+    - name: Build
+      run: cmake --build build -j$(nproc)
+    
+    - name: Run CPU tests
+      run: |
+        cd build
+        ctest --output-on-failure
+    
+    - name: Run CRT demo
+      run: ./build/demo_crt_matrix
+
+  # GPU tests - only runs if self-hosted ROCm runner available
+  build-gpu:
+    name: Build and Test (GPU)
+    runs-on: [self-hosted, rocm]
+    if: github.repository == 'your-org/rocm-rns-matmul'
+    continue-on-error: true
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure CMake (GPU)
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DRNS_ENABLE_GPU=ON
+    
+    - name: Build
+      run: cmake --build build -j$(nproc)
+    
+    - name: Run all tests
+      run: |
+        cd build
+        ctest --output-on-failure
+    
+    - name: Run GEMM demo
+      run: ./build/demo_gemm

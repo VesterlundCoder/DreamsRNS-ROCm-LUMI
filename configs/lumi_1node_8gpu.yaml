@@ -1,0 +1,133 @@
+# =============================================================================
+# Dreams-RNS-ROCm: 1-node / 8-GPU configuration for LUMI-G
+#
+# This is the default configuration for Test Campaign 1.
+# Each GPU processes one CMF at a time with 100 shifts × 1000 trajectories.
+# =============================================================================
+
+# --- Run identity ---
+run_name: "test1_zeta3_8gpu"
+description: "First test campaign: zeta(3) search on 1 LUMI-G node"
+
+# --- Target constants ---
+targets:
+  - name: "zeta3"
+    value: 1.2020569031595942
+  - name: "zeta5"
+    value: 1.0369277551433699
+  - name: "zeta7"
+    value: 1.0083492773819228
+
+primary_target: "zeta3"
+
+# --- RNS configuration ---
+rns:
+  K: 64                    # Number of 31-bit primes (64 × 31 = 1984 bits capacity)
+  K_small: 6               # Primes for partial CRT delta proxy
+  prime_method: "near_top" # "near_top" or "prng"
+
+# --- Walk configuration ---
+walk:
+  depth: 2000              # Total walk steps
+  snapshot_depths:
+    - 200
+    - 2000
+  normalize_every: 50      # Normalize shadow float every N steps
+
+# --- Shifts ---
+shifts:
+  count: 100               # Shifts per CMF
+  method: "grid"           # "grid", "random", or "sphere"
+  bounds: [-1000, 1000]
+  seed: 42
+
+# --- Trajectories ---
+trajectories:
+  count: 1000              # Unique normalized trajectories per shift
+  max_component: 50
+  ordering: "lexicographic"  # "lexicographic" or "angle"
+
+# --- Distribution ---
+distribution:
+  mode: "cmf_per_gpu"      # Each rank gets one CMF at a time
+  work_queue: false         # Set true for dynamic load balancing
+  checkpoint_every: 10      # Checkpoint every N completed tasks
+
+# --- Delta triage ---
+triage:
+  delta_threshold: 0.0     # Log results only when delta > this
+  escalate_threshold: 0.0  # Escalate to full CRT when delta > this
+  full_crt_dps: 100        # mpmath decimal places for full verification
+
+# --- Output ---
+output:
+  base_dir: "/scratch/${LUMI_PROJECT}/dreams_runs"
+  format: "jsonl"           # "jsonl" or "parquet"
+  compress: false
+
+# --- Performance ---
+performance:
+  topk: 100                # Keep top-K hits per CMF
+  batch_size: 100          # Shifts processed per batch on GPU
+
+# --- CMF families (for test 1) ---
+cmf_families:
+  - name: "Apery_Zeta3_2x2"
+    matrix:
+      "0,0": "n**3"
+      "0,1": "1"
+      "1,0": "-(n+1)**6"
+      "1,1": "34*n**3 + 51*n**2 + 27*n + 5"
+    m: 2
+    dim: 1
+    axis_names: ["n"]
+    directions: [1]
+    target: "zeta3"
+
+  - name: "Simple_Pi_2x2"
+    matrix:
+      "0,0": "x"
+      "0,1": "1"
+      "1,0": "x**2"
+      "1,1": "2*x + 1"
+    m: 2
+    dim: 1
+    axis_names: ["x"]
+    directions: [1]
+    target: "pi"
+
+  - name: "Euler_E_2x2"
+    matrix:
+      "0,0": "n + 1"
+      "0,1": "1"
+      "1,0": "n + 1"
+      "1,1": "n + 2"
+    m: 2
+    dim: 1
+    axis_names: ["n"]
+    directions: [1]
+    target: "e"
+
+  - name: "TwoAxis_4x4"
+    matrix:
+      "0,0": "x + y"
+      "0,1": "1"
+      "0,2": "0"
+      "0,3": "0"
+      "1,0": "x*y"
+      "1,1": "x - y"
+      "1,2": "1"
+      "1,3": "0"
+      "2,0": "x**2"
+      "2,1": "y**2"
+      "2,2": "x + 1"
+      "2,3": "1"
+      "3,0": "1"
+      "3,1": "x"
+      "3,2": "y"
+      "3,3": "x*y + 1"
+    m: 4
+    dim: 2
+    axis_names: ["x", "y"]
+    directions: [1, 1]
+    target: "pi"

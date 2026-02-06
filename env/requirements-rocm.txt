@@ -1,0 +1,18 @@
+# Optional ROCm-specific dependencies
+# Install AFTER the base requirements on a LUMI-G compute node
+#
+# NOTE: cupy-rocm wheels may not be available for all ROCm versions.
+# Check https://docs.cupy.dev/en/stable/install.html#installing-cupy-for-rocm
+#
+# If cupy-rocm is unavailable, the pipeline falls back to CPU-only mode.
+# PyTorch ROCm is another option but heavier.
+
+# Option A: CuPy for ROCm (preferred, lightweight)
+# cupy-rocm-5-6  # Uncomment if ROCm 5.6 wheels are available
+
+# Option B: PyTorch ROCm (heavier, but well-supported on LUMI)
+# Install via:
+#   pip install torch --index-url https://download.pytorch.org/whl/rocm5.6
+
+# Option C: JAX ROCm (experimental)
+# jax[rocm]==0.4.25  # Check JAX ROCm support status
