@@ -6,7 +6,7 @@ Runs **8 GPUs simultaneously** on a single LUMI-G node with 1 MPI rank per GPU.
 
 ## Overview
 
-This pipeline searches for exceptional rational approximations to mathematical constants (ζ(3), ζ(5), ζ(7), π, etc.) using Continued Matrix Fractions (CMFs). The computation is done entirely in **exact integer arithmetic** via the Residue Number System, avoiding floating-point precision loss.
+This pipeline searches for exceptional rational approximations to mathematical constants (ζ(3), ζ(5), ζ(7), π, etc.) using Conservative Matrix Fields (CMFs). The computation is done entirely in **exact integer arithmetic** via the Residue Number System, avoiding floating-point precision loss.
 
 ### Architecture
 
