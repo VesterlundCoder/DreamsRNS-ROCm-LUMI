@@ -39,3 +39,7 @@ checkpoint_*.json
 *.out
 *.err
 select_gpu.sh
+verify_full.csv
+verify_report.csv
+*.csv
+outputs/

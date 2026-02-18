@@ -124,7 +124,7 @@ class CmfCompiler:
         program = compiler.build()
     """
 
-    MAX_REGS = 128
+    MAX_REGS = 512
 
     def __init__(self, m: int, dim: int,
                  directions: Optional[List[int]] = None,
@@ -339,8 +339,74 @@ def compile_cmf_from_sympy(
             if entry != 0:
                 reg = _compile_sympy_expr(compiler, entry, axis_symbols)
                 compiler.store(reg, i, j)
+                # Reclaim intermediate registers: keep only result registers alive
+                saved = set(compiler.entry_regs.values())
+                compiler.next_reg = max(saved) + 1 if saved else 0
 
     return compiler.build()
+
+
+def compile_pcf_from_strings(
+    a_str: str,
+    b_str: str,
+) -> Optional[CmfProgram]:
+    """Compile PCF(a(n), b(n)) to bytecode using correct companion matrix.
+
+    Builds the companion matrix matching ramanujantools convention:
+        M(n) = [[0, b(n)], [1, a(n)]]
+
+    The walk variable n is mapped to LOAD_X axis 0 with shift=1, direction=1
+    so that at step t the axis value is 1+t = 1, 2, 3, ...
+
+    Returns None if the PCF contains imaginary numbers.
+    """
+    import sympy as sp
+    from sympy.abc import n
+
+    a_expr = sp.sympify(a_str)
+    b_expr = sp.sympify(b_str)
+
+    if a_expr.has(sp.I) or b_expr.has(sp.I):
+        return None
+
+    # Rename n -> _s so the compiler uses LOAD_X (axis 0) instead of a
+    # hypothetical LOAD_N opcode. With shift=1, direction=1:
+    #   axis_val = 1 + step*1 = 1, 2, 3, ... which gives n = 1, 2, 3, ...
+    _s = sp.Symbol("_s")
+    a_expr = a_expr.subs(n, _s)
+    b_expr = b_expr.subs(n, _s)
+
+    axis_symbols = {"_s": 0}
+    compiler = CmfCompiler(m=2, dim=1, directions=[1], name=f"PCF({a_str}, {b_str})")
+
+    # M[0,0] = 0 — skip (matrix initialised to zero by build())
+    # M[0,1] = b(n)
+    reg_b = _compile_sympy_expr(compiler, b_expr, axis_symbols)
+    compiler.store(reg_b, 0, 1)
+    saved = set(compiler.entry_regs.values())
+    compiler.next_reg = max(saved) + 1 if saved else 0
+
+    # M[1,0] = 1
+    reg_one = _compile_sympy_expr(compiler, sp.Integer(1), axis_symbols)
+    compiler.store(reg_one, 1, 0)
+    saved = set(compiler.entry_regs.values())
+    compiler.next_reg = max(saved) + 1 if saved else 0
+
+    # M[1,1] = a(n)
+    reg_a = _compile_sympy_expr(compiler, a_expr, axis_symbols)
+    compiler.store(reg_a, 1, 1)
+
+    return compiler.build()
+
+
+def pcf_initial_values(a_str: str) -> int:
+    """Compute a(0) for the initial-values matrix A = [[1, a(0)], [0, 1]].
+
+    Returns a(0) evaluated as integer.
+    """
+    import sympy as sp
+    from sympy.abc import n
+    return int(sp.sympify(a_str).subs(n, 0))
 
 
 def compile_cmf_from_dict(

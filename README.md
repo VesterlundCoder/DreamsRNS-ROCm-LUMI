@@ -1,127 +1,136 @@
 # Dreams-RNS-ROCm-LUMI
 
-**GPU-accelerated Ramanujan Dreams pipeline** using RNS (Residue Number System) arithmetic on **AMD MI250X GPUs** via ROCm/HIP on the **LUMI-G supercomputer**.
+**GPU-accelerated verification of Polynomial Continued Fractions (PCFs)** using
+RNS (Residue Number System) arithmetic on **AMD MI250X GPUs** via ROCm/HIP on
+the **LUMI-G supercomputer**.
 
-Runs **8 GPUs simultaneously** on a single LUMI-G node with 1 MPI rank per GPU.
+Produces **exact** big-integer convergents. Runs on LUMI `small-g` partition
+inside **Singularity containers**.
+
+## Mathematical Convention (matches `ramanujantools`)
+
+```
+Companion matrix:   M(n) = [[0, b(n)], [1, a(n)]]
+Initial values:     A     = [[1, a(0)], [0, 1]]
+Walk product:       P(N)  = A · M(1) · M(2) · … · M(N)
+Convergent:         p/q   = P[0, m-1] / P[1, m-1]   (last column)
+Delta:              δ     = -(1 + log|p/q - L| / log|q|)
+```
 
 ## Overview
 
-This pipeline searches for exceptional rational approximations to mathematical constants (ζ(3), ζ(5), ζ(7), π, etc.) using Conservative Matrix Fields (CMFs). The computation is done entirely in **exact integer arithmetic** via the Residue Number System, avoiding floating-point precision loss.
+This pipeline verifies PCFs and searches for exceptional rational approximations
+to mathematical constants (π, ζ(3), ζ(5), etc.). All computation uses **exact
+integer arithmetic** via the Residue Number System, avoiding floating-point
+precision loss.
 
-### Architecture
+### Quick Start
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    LUMI-G Node (1 node, 8 GPUs)                 │
-│                                                                 │
-│  Rank 0 ──► GPU 0 ──► CMF family A                             │
-│  Rank 1 ──► GPU 1 ──► CMF family B                             │
-│  Rank 2 ──► GPU 2 ──► CMF family C                             │
-│  ...                                                            │
-│  Rank 7 ──► GPU 7 ──► CMF family H                             │
-│                                                                 │
-│  Each rank:                                                     │
-│    for each CMF assigned to this rank:                          │
-│      for each trajectory (1000):                                │
-│        for each shift (100):                                    │
-│          ┌─────────┐    ┌──────┐    ┌───────┐    ┌──────────┐  │
-│          │ COMPILE │───►│ EVAL │───►│ WALK  │───►│  SCORE   │  │
-│          │ CMF→BC  │    │ Axes │    │ P@M_t │    │  Delta   │  │
-│          └─────────┘    └──────┘    └───────┘    └──────────┘  │
-│                                                    │            │
-│                                        delta > 0 ──► LOG       │
-│                                        delta > T ──► ESCALATE  │
-│                                                      to CPU    │
-│                                                      Full CRT  │
-└─────────────────────────────────────────────────────────────────┘
+```python
+from dreams_rocm import verify_pcf
+
+result = verify_pcf(
+    a_str="2",
+    b_str="n**2",
+    limit_str="2/(4 - pi)",
+    depth=2000,
+    K=64,
+)
+print(f"δ_exact = {result['delta_exact']:.6f}")   # ≈ -1.000291
+print(f"δ_float = {result['delta_float']:.6f}")   # ≈ -0.998855
+print(f"p bits  = {result['p_bits']}")             # 1984
 ```
 
-### Pipeline Stages
+### Verification Results
 
-1. **CMF Compile** — Symbolic matrix → bytecode (CPU, offline)
-2. **Axis Evaluation** — Evaluate matrix entries mod each prime (GPU/CPU)
-3. **Walk** — Iterated matrix product P = P @ M_t in RNS (GPU/CPU)
-4. **Delta Proxy** — Partial CRT → float64 ratio → Dreams delta
-5. **Triage** — delta > 0 → log; delta > threshold → escalate to CPU full CRT
+| Dataset | PCFs | Limit matches | Depth | K |
+|---------|------|---------------|-------|----- |
+| pcfs.json (Euler2AI) | 10/10 | 10/10 (100%) | 2000 | 64 |
+| Built-in test PCFs | 4/4 | 4/4 (100%) | 2000 | 64 |
 
-### Test Campaign 1 Configuration
+### Pipeline Architecture
 
-| Parameter | Value |
-|-----------|-------|
-| GPUs | 8 (1 LUMI-G node) |
-| Shifts per CMF | 100 |
-| Trajectories per shift | 1,000 |
-| Total per CMF | 100,000 evaluations |
-| RNS primes (K) | 64 (1,984 bits) |
-| Walk depth | 2,000 steps |
-| Targets | ζ(3), ζ(5), ζ(7) |
+```
+┌──────────────────────────────────────────────────────────┐
+│  CPU: compile_pcf_from_strings(a, b) → CmfProgram (BC)  │
+└────────────────────┬─────────────────────────────────────┘
+                     ▼
+┌──────────────────────────────────────────────────────────┐
+│  RNS WALK (vectorised across K=64 primes)                │
+│                                                          │
+│  A = [[1, a(0)], [0, 1]]   ← initial values             │
+│  for step in 1..depth:                                   │
+│    M = eval_bytecode(step)  ← [[0,b(n)],[1,a(n)]]       │
+│    P_rns = P_rns @ M (mod p_k)  ← exact, per prime      │
+│    P_f64 = P_f64 @ M            ← float64 shadow        │
+│                                                          │
+│  p = P[0,1], q = P[1,1]   ← last column extraction      │
+└────────────────────┬─────────────────────────────────────┘
+                     ▼
+┌──────────────────────────────────────────────────────────┐
+│  CRT RECONSTRUCT  p_big, q_big from K residues           │
+│  DELTA  δ = -(1 + log|p/q - L| / log|q|) via mpmath     │
+└──────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Quick Start on LUMI
+## Deployment on LUMI
 
-### 1. Clone and set up environment
+### 1. Build the Singularity container
 
 ```bash
-# On LUMI login node
+# On a machine with Singularity (or LUMI login node)
+singularity build dreams_rocm.sif env/dreams_rocm.def
+```
+
+### 2. Upload code and data
+
+```bash
 cd /projappl/$LUMI_PROJECT
 git clone <your-repo-url> Dreams-RNS-ROCm-LUMI
 cd Dreams-RNS-ROCm-LUMI
 
-# Load modules
-source env/lumi_modules.sh
-
-# Create virtual environment
-python3 -m venv --system-site-packages $HOME/dreams-venv
-source $HOME/dreams-venv/bin/activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r env/requirements.txt
+# Copy data to scratch
+mkdir -p $SCRATCH/dreams_data
+cp pcfs.json cmf_pcfs.json $SCRATCH/dreams_data/
 ```
 
-### 2. Validate the installation
+### 3. Validate the installation
 
 ```bash
-# On login node (GPU checks will be skipped)
-python scripts/validate_rocm_rns.py
+# Local (no GPU)
+python3 scripts/validate_rocm_rns.py
 
-# On a compute node (full validation including GPU)
+# On compute node via Singularity
 srun --partition=small-g --nodes=1 --ntasks=1 --gpus=1 \
      --time=00:10:00 --account=project_XXXXXXX \
-     python scripts/validate_rocm_rns.py
-```
-
-### 3. Preview the task list
-
-```bash
-python scripts/make_tasks.py --config configs/lumi_1node_8gpu.yaml
+     singularity exec --rocm dreams_rocm.sif \
+     python3 scripts/validate_rocm_rns.py
 ```
 
 ### 4. Submit the job
 
 ```bash
-# Edit the account in the sbatch script first:
-# Change --account=project_465001234 to your project ID
-
+# Edit --account in scripts/sbatch_1node_8gpu.sh first
 sbatch scripts/sbatch_1node_8gpu.sh
 ```
 
 ### 5. Check results
 
 ```bash
-# Job output
-cat dreams-rns_<JOBID>.out
+ls $SCRATCH/dreams_runs/run_<timestamp>_<JOBID>/
+# smoke_report.csv   - Quick 5-PCF validation
+# full_report.csv    - Full verification results
+```
 
-# Results directory
-ls /scratch/$LUMI_PROJECT/dreams_runs/run_<timestamp>_<JOBID>/
+### Alternative: module-based setup (no container)
 
-# Files produced:
-#   manifest.json              - Run metadata
-#   results_rank{0-7}.jsonl    - Per-rank results (delta > 0 only)
-#   positives_rank{0-7}.jsonl  - Escalated positive hits
-#   metrics_rank{0-7}.jsonl    - Timing and performance data
-#   summary.json               - Global summary
+```bash
+source env/lumi_modules.sh
+python3 -m venv --system-site-packages $HOME/dreams-venv
+source $HOME/dreams-venv/bin/activate
+pip install -r env/requirements.txt
 ```
 
 ---
@@ -133,6 +142,7 @@ Dreams-RNS-ROCm-LUMI/
 ├── README.md                           # This file
 ├── pyproject.toml                      # Python package config
 ├── env/
+│   ├── dreams_rocm.def                 # Singularity container definition
 │   ├── lumi_modules.sh                 # LUMI module loads for ROCm + Python
 │   ├── requirements.txt                # Core Python dependencies
 │   └── requirements-rocm.txt           # Optional ROCm-specific deps
@@ -140,13 +150,15 @@ Dreams-RNS-ROCm-LUMI/
 │   ├── lumi_1node_8gpu.yaml            # Default 1-node/8-GPU config
 │   └── triage.yaml                     # Delta triage thresholds
 ├── scripts/
-│   ├── sbatch_1node_8gpu.sh            # SLURM batch script
-│   ├── run_mpi_sweep.py                # MPI orchestrator (main entry)
+│   ├── sbatch_1node_8gpu.sh            # SLURM batch script (Singularity)
+│   ├── run_mpi_sweep.py                # MPI PCF sweep (JSONL input)
+│   ├── euler2ai_verify.py              # Batch PCF verification CLI
+│   ├── run_local_mac.py                # Local Mac test runner
 │   ├── make_tasks.py                   # Task list generator
 │   └── validate_rocm_rns.py            # Installation validation
 ├── dreams_rocm/
 │   ├── __init__.py
-│   ├── runner.py                       # CPU walk execution (fallback)
+│   ├── runner.py                       # Correct PCF walk (v0.2.0)
 │   ├── gpu_runner.py                   # GPU walk via native RNS-ROCm library
 │   ├── cmf_compile.py                  # CMF → bytecode compiler
 │   ├── trajectories.py                 # Trajectory generation + normalization
@@ -453,15 +465,16 @@ Added a flat C API wrapper (`extern "C"`) for all key library functions, enablin
 
 ## Roadmap
 
+- [x] Correct PCF companion matrix convention (v0.2.0)
+- [x] Full K-prime vectorised RNS walk with CRT + mpmath delta
+- [x] Singularity container for LUMI small-g partition
 - [x] Pure-Python CPU pipeline with RNS arithmetic
-- [x] MPI 1-node/8-GPU orchestration
+- [x] MPI PCF sweep orchestration
 - [x] Structured JSONL logging with triage
-- [x] Trajectory normalization and deduplication
 - [x] Partial CRT delta proxy
 - [x] Full CRT CPU verification with mpmath
 - [x] RNS-ROCm library integrated with bug fixes (barrett.h, gfx90a)
 - [x] C ABI wrapper + ctypes bindings for native library
-- [x] Build script for LUMI (scripts/build_rns_lib.sh)
 - [ ] Full GPU-accelerated walk via native library on LUMI
 - [ ] Multi-node scaling (N nodes × 8 GPUs)
 - [ ] Parquet output format

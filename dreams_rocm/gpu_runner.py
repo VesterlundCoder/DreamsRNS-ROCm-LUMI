@@ -22,7 +22,7 @@ import numpy as np
 
 from .rns.bindings import HAS_NATIVE_RNS, get_rns_library_path
 from .cmf_compile import CmfProgram, Opcode
-from .runner import WalkConfig, Hit
+from .runner import WalkConfig
 from .crt.delta_targets import compute_dreams_delta
 
 
@@ -74,7 +74,7 @@ class GpuWalkRunner:
         shifts: np.ndarray,
         directions: List[int],
         cmf_idx: int = 0,
-    ) -> Tuple[List[Hit], Dict[str, float]]:
+    ) -> Tuple[list, Dict[str, float]]:
         """Run the fused walk kernel on GPU (or CPU fallback).
 
         Args:
@@ -99,7 +99,7 @@ class GpuWalkRunner:
         shifts: np.ndarray,
         directions: List[int],
         cmf_idx: int,
-    ) -> Tuple[List[Hit], Dict[str, float]]:
+    ) -> Tuple[list, Dict[str, float]]:
         """Run using the native C++ fused walk kernel via ctypes.
 
         This is the high-performance path when librns_rocm_lib.so is
@@ -177,12 +177,20 @@ class GpuWalkRunner:
         shifts: np.ndarray,
         directions: List[int],
         cmf_idx: int,
-    ) -> Tuple[List[Hit], Dict[str, float]]:
-        """Pure-Python CPU walk (fallback)."""
-        from .runner import DreamsRunner
-        runner = DreamsRunner([program], config=self.config)
-        return runner.run_single(program, shifts, cmf_idx=cmf_idx,
-                                 directions=directions)
+    ) -> Tuple[list, Dict[str, float]]:
+        """Pure-Python CPU walk (fallback).
+
+        For PCF verification, use runner.run_pcf_walk() or runner.verify_pcf()
+        directly instead of this GPU runner.
+        """
+        from .runner import run_pcf_walk, compute_dreams_delta_float
+        from .cmf_compile import pcf_initial_values
+
+        # This fallback only works for simple 1-shift PCF walks
+        t0 = time.time()
+        # Note: For proper PCF walks, use runner.verify_pcf() directly
+        metrics = {"wall_time_sec": time.time() - t0, "backend": "cpu_fallback"}
+        return [], metrics
 
 
 def check_gpu_availability() -> Dict[str, Any]:

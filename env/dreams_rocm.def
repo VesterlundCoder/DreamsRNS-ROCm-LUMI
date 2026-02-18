@@ -1,0 +1,40 @@
+Bootstrap: docker
+From: rocm/dev-ubuntu-22.04:5.6.1
+
+%labels
+    Author DreamsRNS Team
+    Version 0.2.0
+    Description Dreams-RNS-ROCm pipeline for LUMI-G (MI250X)
+
+%post
+    apt-get update -qq && apt-get install -y -qq \
+        python3 python3-pip python3-venv \
+        && rm -rf /var/lib/apt/lists/*
+
+    pip3 install --no-cache-dir \
+        numpy==1.26.4 \
+        sympy==1.13.3 \
+        mpmath==1.3.0 \
+        pyyaml==6.0.2 \
+        tqdm==4.67.1
+
+%environment
+    export LC_ALL=C
+    export PATH=/opt/rocm/bin:$PATH
+
+%runscript
+    exec python3 "$@"
+
+%help
+    Dreams-RNS-ROCm Singularity container for LUMI-G.
+
+    Build:
+        singularity build dreams_rocm.sif env/dreams_rocm.def
+
+    Run verification:
+        singularity exec --bind $PWD:/workspace dreams_rocm.sif \
+            python3 /workspace/scripts/euler2ai_verify.py \
+            --input /workspace/data/pcfs.json --depth 2000 --K 64
+
+    Interactive shell:
+        singularity shell --bind $PWD:/workspace dreams_rocm.sif

@@ -200,55 +200,59 @@ def main():
         traceback.print_exc()
 
     # ---------------------------------------------------------------
-    # 6. CMF Compile + Small Walk
+    # 6. PCF Compile + Walk (correct conventions)
     # ---------------------------------------------------------------
-    section("6. CMF Compile + Small Walk Smoke Test")
+    section("6. PCF Compile + Walk Smoke Test (v0.2.0)")
 
     try:
-        from dreams_rocm.cmf_compile import compile_cmf_from_dict
-        from dreams_rocm.runner import DreamsRunner, WalkConfig
-        from dreams_rocm.shifts import generate_shifts
-        import numpy as np
+        from dreams_rocm.cmf_compile import compile_pcf_from_strings, pcf_initial_values
+        from dreams_rocm.runner import run_pcf_walk, verify_pcf
+        import math
 
-        # Compile Apery zeta(3) CMF
-        program = compile_cmf_from_dict(
-            matrix_dict={
-                (0, 0): "n**3",
-                (0, 1): "1",
-                (1, 0): "-(n+1)**6",
-                (1, 1): "34*n**3 + 51*n**2 + 27*n + 5",
-            },
-            m=2, dim=1,
-            axis_names=["n"],
-            directions=[1],
-            name="Apery_Zeta3",
-        )
-        results.append(check("Compile Apery CMF",
-                             len(program.instructions) > 0,
+        # Compile PCF(2, n**2) — famous Brouncker CF for pi
+        program = compile_pcf_from_strings("2", "n**2")
+        results.append(check("Compile PCF(2, n**2)",
+                             program is not None and len(program.instructions) > 0,
                              f"{len(program.instructions)} instructions"))
 
-        # Small walk
-        config = WalkConfig(
-            K=8, B=10, depth=50, topk=5,
-            target=1.2020569031595942,
-            target_name="zeta3",
-            snapshot_depths=(25, 50),
-        )
+        # Check initial values
+        a0 = pcf_initial_values("2")
+        results.append(check("pcf_initial_values('2') == 2", a0 == 2))
 
-        runner = DreamsRunner([program], config=config)
-        shifts = generate_shifts(n_shifts=10, dim=1, method="grid",
-                                 bounds=(-50, 50))
-
+        # Small RNS walk (depth=200, K=8)
         t0 = time.time()
-        hits, metrics = runner.run_single(program, shifts, cmf_idx=0)
+        res = run_pcf_walk(program, a0, depth=200, K=8)
         dt = time.time() - t0
 
-        results.append(check("Walk completed",
-                             metrics.get("wall_time_sec", 0) > 0,
-                             f"{dt:.3f}s, {len(hits)} hits"))
+        p_f = res['p_float']
+        q_f = res['q_float']
+        est = p_f / q_f if abs(q_f) > 1e-300 else float('nan')
+        target = 2.0 / (4.0 - 3.141592653589793)  # 2/(4-pi)
+        close = abs(est - target) < 0.1
+
+        results.append(check("RNS walk (depth=200, K=8)",
+                             close,
+                             f"est={est:.6f}, target={target:.6f}, dt={dt:.3f}s"))
+
+        # Full verify_pcf
+        t0 = time.time()
+        vr = verify_pcf("2", "n**2", "2/(4 - pi)", depth=500, K=16, dps=100)
+        dt = time.time() - t0
+
+        if vr is not None:
+            d_exact = vr['delta_exact']
+            results.append(check("verify_pcf exact delta",
+                                 d_exact is not None and math.isfinite(d_exact),
+                                 f"delta_exact={d_exact:.6f}, dt={dt:.3f}s"))
+
+            limit_match = abs(vr['est_float'] - vr['target']) < 0.01
+            results.append(check("verify_pcf limit match", limit_match,
+                                 f"est={vr['est_float']:.6f}, target={vr['target']:.6f}"))
+        else:
+            results.append(check("verify_pcf", False, "returned None"))
 
     except Exception as e:
-        results.append(check("CMF smoke test", False, str(e)))
+        results.append(check("PCF smoke test", False, str(e)))
         traceback.print_exc()
 
     # ---------------------------------------------------------------
