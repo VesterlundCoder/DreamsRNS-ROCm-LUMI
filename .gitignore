@@ -43,3 +43,6 @@ verify_full.csv
 verify_report.csv
 *.csv
 outputs/
+cmfs_exhaust.jsonl
+tasks/
+results/

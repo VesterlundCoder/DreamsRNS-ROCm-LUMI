@@ -30,6 +30,12 @@ from .runner import (
 )
 from .trajectories import generate_trajectories, normalize_trajectory
 from .shifts import generate_shifts
+from .exhaust import (
+    exhaust_trajectories, exhaust_shifts, exhaust_summary,
+    generate_primitive_trajectories, generate_unique_shifts,
+    canonical_direction, RationalShift, EXHAUST_PRESETS,
+)
+from .cmf_generator import generate_2f2_specs, generate_3f3_specs, CMFSpec
 from .logging import RunLogger, RunManifest
 from .gpu_runner import GpuWalkRunner, check_gpu_availability
 
@@ -44,5 +50,9 @@ __all__ = [
     "GpuWalkRunner", "check_gpu_availability",
     "generate_trajectories", "normalize_trajectory",
     "generate_shifts",
+    "exhaust_trajectories", "exhaust_shifts", "exhaust_summary",
+    "generate_primitive_trajectories", "generate_unique_shifts",
+    "canonical_direction", "RationalShift", "EXHAUST_PRESETS",
+    "generate_2f2_specs", "generate_3f3_specs", "CMFSpec",
     "RunLogger", "RunManifest",
 ]
