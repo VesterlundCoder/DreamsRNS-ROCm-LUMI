@@ -18,6 +18,9 @@ from .cmf_compile import (
     compile_pcf_from_strings, pcf_initial_values,
     CmfProgram, Opcode, Instruction, CmfCompiler,
 )
+from .cmf_walk import (
+    compile_cmf_spec, run_cmf_walk, run_cmf_walk_vec, run_cmf_walk_batch,
+)
 from .runner import (
     WalkConfig,
     generate_rns_primes,
@@ -34,6 +37,7 @@ from .exhaust import (
     exhaust_trajectories, exhaust_shifts, exhaust_summary,
     generate_primitive_trajectories, generate_unique_shifts,
     canonical_direction, RationalShift, EXHAUST_PRESETS,
+    compute_sphere_coverage,
 )
 from .cmf_generator import (
     generate_pFq_specs, generate_2f2_specs, generate_3f2_specs,
@@ -48,6 +52,7 @@ __all__ = [
     "compile_cmf_from_dict", "compile_cmf_from_sympy",
     "compile_pcf_from_strings", "pcf_initial_values",
     "CmfProgram", "Opcode", "Instruction", "CmfCompiler",
+    "compile_cmf_spec", "run_cmf_walk", "run_cmf_walk_vec", "run_cmf_walk_batch",
     "WalkConfig",
     "generate_rns_primes", "crt_reconstruct", "centered",
     "compute_dreams_delta_float", "compute_dreams_delta_exact",
@@ -58,6 +63,7 @@ __all__ = [
     "exhaust_trajectories", "exhaust_shifts", "exhaust_summary",
     "generate_primitive_trajectories", "generate_unique_shifts",
     "canonical_direction", "RationalShift", "EXHAUST_PRESETS",
+    "compute_sphere_coverage",
     "generate_pFq_specs", "generate_2f2_specs", "generate_3f2_specs",
     "generate_3f3_specs", "generate_4f3_specs", "generate_5f4_specs",
     "build_pFq_companion_matrix", "write_specs_chunked",

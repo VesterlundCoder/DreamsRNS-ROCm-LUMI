@@ -200,21 +200,60 @@ def _matmul_rxr_mod(A: np.ndarray, B: np.ndarray, pp: np.ndarray, r: int) -> np.
     return C
 
 
-# ── General r×r bytecode evaluator with per-axis shifts ──────────────────
+# ── Parse rational values ────────────────────────────────────────────────
+
+def _parse_rational_list(vals) -> Tuple[List[int], List[int]]:
+    """Convert a list of int/Fraction/tuple to (numerators, denominators)."""
+    nums, dens = [], []
+    for v in vals:
+        if isinstance(v, Fraction):
+            nums.append(v.numerator)
+            dens.append(v.denominator)
+        elif isinstance(v, tuple):
+            nums.append(v[0])
+            dens.append(v[1])
+        else:
+            nums.append(int(v))
+            dens.append(1)
+    return nums, dens
+
+
+def _precompute_inv_combined(
+    sd: List[int], td: List[int], pp: np.ndarray,
+) -> List[np.ndarray]:
+    """Precompute inv(sd[i] * td[i]) mod each prime."""
+    inv_cd = []
+    for s, t in zip(sd, td):
+        cd = s * t
+        if cd == 1:
+            inv_cd.append(np.ones(len(pp), dtype=np.int64))
+        else:
+            inv_cd.append(np.array(
+                [pow(cd, int(p) - 2, int(p)) for p in pp], dtype=np.int64))
+    return inv_cd
+
+
+# ── General r×r bytecode evaluator with rational shifts+trajectories ─────
 
 def _eval_bytecode_allprimes_multiaxis(
     program: CmfProgram,
     step: int,
-    shift_vals: List[int],
+    sn: List[int],
+    sd: List[int],
+    tn: List[int],
+    td: List[int],
+    inv_cd: List[np.ndarray],
     primes: np.ndarray,
     const_table: np.ndarray,
 ) -> np.ndarray:
-    """Evaluate bytecode producing (m, m, K) matrix with per-axis shift values.
+    """Evaluate bytecode producing (m, m, K) matrix with rational shifts+trajectories.
 
     Uses ROCm instruction format: Instruction(op, dst, a, b).
     Output via program.out_reg[i*m+j].
 
-    At LOAD_X for axis i: value = shift_vals[i] + step * direction[i]
+    Per axis i at step s:  val = sn[i]/sd[i] + s * tn[i]/td[i]
+                              = (sn[i]*td[i] + s*tn[i]*sd[i]) / (sd[i]*td[i])
+    inv_cd[i] = precomputed inv(sd[i]*td[i]) mod each prime.
     """
     m = program.m
     K = len(primes)
@@ -228,8 +267,8 @@ def _eval_bytecode_allprimes_multiaxis(
 
         if op == Opcode.LOAD_X:
             axis = instr.a
-            val = np.int64(shift_vals[axis] + step * program.directions[axis])
-            regs[dst] = val % pp
+            k_num = sn[axis] * td[axis] + step * tn[axis] * sd[axis]
+            regs[dst] = (np.int64(k_num) % pp * inv_cd[axis]) % pp
         elif op == Opcode.LOAD_C:
             c_idx = instr.a
             if c_idx < len(const_table):
@@ -277,9 +316,12 @@ def _eval_bytecode_allprimes_multiaxis(
 def _eval_bytecode_float_multiaxis(
     program: CmfProgram,
     step: int,
-    shift_vals: List[int],
+    sn: List[int],
+    sd: List[int],
+    tn: List[int],
+    td: List[int],
 ) -> np.ndarray:
-    """Evaluate bytecode producing (m, m) float64 matrix with per-axis shifts.
+    """Evaluate bytecode producing (m, m) float64 matrix with rational shifts+trajectories.
 
     Uses ROCm instruction format.
     """
@@ -292,7 +334,8 @@ def _eval_bytecode_float_multiaxis(
 
         if op == Opcode.LOAD_X:
             axis = instr.a
-            regs[dst] = float(shift_vals[axis] + step * program.directions[axis])
+            k_num = sn[axis] * td[axis] + step * tn[axis] * sd[axis]
+            regs[dst] = float(k_num) / float(sd[axis] * td[axis])
         elif op == Opcode.LOAD_C:
             c_idx = instr.a
             if c_idx < len(program.constants):
@@ -337,15 +380,18 @@ def run_cmf_walk(
     program: CmfProgram,
     depth: int,
     K: int,
-    shift_vals: List[int],
+    shift_vals,
+    trajectory_vals=None,
 ) -> Dict[str, Any]:
-    """Walk an r×r companion matrix with per-axis shift values.
+    """Walk an r×r companion matrix with per-axis shift and trajectory values.
 
     Args:
-        program:    compiled CmfProgram (r×r, multi-axis)
-        depth:      walk steps
-        K:          number of RNS primes
-        shift_vals: per-axis starting offsets (len = program.dim)
+        program:         compiled CmfProgram (r×r, multi-axis)
+        depth:           walk steps
+        K:               number of RNS primes
+        shift_vals:      per-axis starting offsets (int, Fraction, or (num,den))
+        trajectory_vals: per-axis step sizes (int, Fraction, or (num,den)).
+                         If None, uses program.directions.
 
     Returns:
         dict with p_residues, q_residues, p_float, q_float, log_scale, primes
@@ -353,6 +399,14 @@ def run_cmf_walk(
     r = program.m
     pp = generate_rns_primes(K).astype(np.int64)
     const_table = _precompute_const_residues(program, pp)
+
+    sn, sd = _parse_rational_list(shift_vals)
+    if trajectory_vals is not None:
+        tn, td = _parse_rational_list(trajectory_vals)
+    else:
+        tn = list(program.directions)
+        td = [1] * len(tn)
+    inv_cd = _precompute_inv_combined(sd, td, pp)
 
     # RNS accumulator: P[i,j,k] = entry (i,j) mod prime k, init to identity
     P_rns = np.zeros((r, r, K), dtype=np.int64)
@@ -365,8 +419,9 @@ def run_cmf_walk(
 
     for step in range(depth):
         M_rns = _eval_bytecode_allprimes_multiaxis(
-            program, step, shift_vals, pp, const_table)
-        M_f = _eval_bytecode_float_multiaxis(program, step, shift_vals)
+            program, step, sn, sd, tn, td, inv_cd, pp, const_table)
+        M_f = _eval_bytecode_float_multiaxis(
+            program, step, sn, sd, tn, td)
 
         P_rns = _matmul_rxr_mod(P_rns, M_rns, pp, r)
 
@@ -392,13 +447,114 @@ def run_cmf_walk(
     }
 
 
+# ── State-vector walk (matvec) ──────────────────────────────────────
+
+def _matvec_mod(M: np.ndarray, v: np.ndarray, pp: np.ndarray, r: int) -> np.ndarray:
+    """Modular r×r matrix × r-vector: w = M @ v mod pp, vectorised over K primes."""
+    w = np.zeros_like(v)
+    for i in range(r):
+        for j in range(r):
+            w[i] = (w[i] + M[i, j] * v[j]) % pp
+    return w
+
+
+def run_cmf_walk_vec(
+    program: CmfProgram,
+    depth: int,
+    K: int,
+    shift_vals,
+    initial_state: List[Fraction],
+    acc_idx: int,
+    const_idx: int,
+    trajectory_vals=None,
+) -> Dict[str, Any]:
+    """State-vector walk: v(N) = M(N-1) · ... · M(0) · v(0).
+
+    Uses matvec (not matmul) — more efficient for state-vector CMFs like
+    odd-zeta where the initial state has specific structure.
+
+    Supports rational shifts AND rational trajectories via modular inverse.
+
+    Args:
+        program:         compiled CmfProgram
+        depth:           walk steps
+        K:               number of RNS primes
+        shift_vals:      per-axis shifts (int, Fraction, or (num,den))
+        initial_state:   list of Fraction values for v(0)
+        acc_idx:         index of accumulator entry (p)
+        const_idx:       index of constant entry (q)
+        trajectory_vals: per-axis trajectories (int, Fraction, or (num,den)).
+                         If None, uses program.directions.
+
+    Returns:
+        dict with p_residues, q_residues, p_float, q_float, log_scale, primes
+    """
+    r = program.m
+    pp = generate_rns_primes(K).astype(np.int64)
+    const_table = _precompute_const_residues(program, pp)
+
+    sn, sd = _parse_rational_list(shift_vals)
+    if trajectory_vals is not None:
+        tn, td = _parse_rational_list(trajectory_vals)
+    else:
+        tn = list(program.directions)
+        td = [1] * len(tn)
+    inv_cd = _precompute_inv_combined(sd, td, pp)
+
+    # Convert initial state (Fractions) to RNS residues
+    v_rns = np.zeros((r, K), dtype=np.int64)
+    for i in range(r):
+        f = initial_state[i]
+        if f == 0:
+            continue
+        num = f.numerator
+        den = f.denominator
+        for ki in range(K):
+            p = int(pp[ki])
+            n_mod = num % p if num >= 0 else (p - (-num % p)) % p
+            if den == 1:
+                v_rns[i, ki] = n_mod
+            else:
+                d_inv = pow(den, p - 2, p)
+                v_rns[i, ki] = (n_mod * d_inv) % p
+
+    # Float shadow
+    v_f = np.array([float(f) for f in initial_state], dtype=np.float64)
+    log_scale = 0.0
+
+    for step in range(depth):
+        M_rns = _eval_bytecode_allprimes_multiaxis(
+            program, step, sn, sd, tn, td, inv_cd, pp, const_table)
+        M_f = _eval_bytecode_float_multiaxis(
+            program, step, sn, sd, tn, td)
+
+        # v = M @ v (matvec, not matmul)
+        v_rns = _matvec_mod(M_rns, v_rns, pp, r)
+
+        v_f = M_f @ v_f
+        mx = np.max(np.abs(v_f))
+        if mx > 1e10:
+            v_f /= mx
+            log_scale += math.log(mx)
+
+    return {
+        'p_residues': v_rns[acc_idx],
+        'q_residues': v_rns[const_idx],
+        'p_float': v_f[acc_idx],
+        'q_float': v_f[const_idx],
+        'log_scale': log_scale,
+        'primes': pp,
+    }
+
+
 # ── Batch CMF walk (GPU native or CPU fallback) ─────────────────────────
 
 def run_cmf_walk_batch(
     program: CmfProgram,
     depth: int,
     K: int = 32,
-    shift_val_list: Optional[List[List[int]]] = None,
+    shift_val_list=None,
+    trajectory_vals=None,
     batch_size: int = 128,
 ) -> List[Dict[str, Any]]:
     """Run B r×r CMF walks, each with per-axis shifts.
@@ -410,7 +566,9 @@ def run_cmf_walk_batch(
         program:        compiled CmfProgram (any rank r)
         depth:          walk depth
         K:              number of RNS primes
-        shift_val_list: list of per-axis shift vectors, each len=dim
+        shift_val_list: list of per-axis shift vectors (int, Fraction, or (num,den))
+        trajectory_vals: per-axis trajectory (shared across batch).
+                         If None, uses program.directions.
         batch_size:     max simultaneous walks per GPU batch
 
     Returns:
@@ -421,17 +579,25 @@ def run_cmf_walk_batch(
     if shift_val_list is None:
         shift_val_list = [[1] * dim]
 
-    # Try native GPU path
-    try:
-        from .rns.bindings import HAS_NATIVE_RNS
-        if HAS_NATIVE_RNS:
-            return _run_cmf_walk_batch_native(
-                program, depth, K, shift_val_list, batch_size)
-    except ImportError:
-        pass
+    # Try native GPU path (integer shifts only for now)
+    if trajectory_vals is None:
+        try:
+            from .rns.bindings import HAS_NATIVE_RNS
+            if HAS_NATIVE_RNS:
+                # Check if all shifts are plain ints (no rationals)
+                all_int = all(
+                    all(isinstance(v, int) for v in sv)
+                    for sv in shift_val_list
+                )
+                if all_int:
+                    return _run_cmf_walk_batch_native(
+                        program, depth, K, shift_val_list, batch_size)
+        except ImportError:
+            pass
 
     # CPU fallback: walk each shift sequentially
-    return [run_cmf_walk(program, depth, K, sv) for sv in shift_val_list]
+    return [run_cmf_walk(program, depth, K, sv, trajectory_vals=trajectory_vals)
+            for sv in shift_val_list]
 
 
 def _run_cmf_walk_batch_native(

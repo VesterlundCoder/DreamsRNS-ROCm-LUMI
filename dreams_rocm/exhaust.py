@@ -228,7 +228,7 @@ def generate_unique_shifts_halves(
     return generate_unique_shifts(dim, n, denoms=[2], seed=seed, mode="centered")
 
 
-# ── Preset exhaust configurations ────────────────────────────────────────
+# ── Preset exhaust configurations ────────────────────────────────────
 
 EXHAUST_PRESETS = {
     4: {"k_max": 3, "n_shifts_full": 512},    # 2F2: ~1,120 traj
@@ -239,46 +239,89 @@ EXHAUST_PRESETS = {
 }
 
 
+def _auto_preset(dim: int) -> dict:
+    """Compute exhaust preset for arbitrary dim.
+
+    For dims without a manual preset, auto-compute k_max so that
+    the number of primitive trajectories stays manageable:
+      dim <=  6: k_max=3
+      dim <= 12: k_max=2
+      dim <= 20: k_max=1
+      dim  > 20: k_max=1 (but with budget-limited shifts)
+    """
+    if dim <= 6:
+        k_max = 3
+    elif dim <= 12:
+        k_max = 2
+    else:
+        k_max = 1
+    n_shifts = min(2048, max(256, 64 * dim))
+    return {"k_max": k_max, "n_shifts_full": n_shifts}
+
+
+# ── Sphere coverage: auto-scale with dimensionality ─────────────────
+
+def compute_sphere_coverage(dim: int, budget: int) -> Tuple[int, int]:
+    """Compute (n_traj, n_shifts) to cover a D-dimensional sphere within budget.
+
+    Trajectories scale O(D²) to cover pair directions on the sphere;
+    shifts get the remaining budget.
+    Budget is a HARD CAP: n_traj × n_shifts <= budget.
+    """
+    # Target traj: max(1+10D, 5D²) for good sphere coverage
+    traj_L1 = 1 + dim * 10
+    traj_target = max(traj_L1, 5 * dim * dim)
+
+    # Primitive trajectory count (rough upper bound)
+    preset = EXHAUST_PRESETS.get(dim) or _auto_preset(dim)
+    # Use primitive count if smaller than target
+    try:
+        n_prim = len(generate_primitive_trajectories(dim, preset["k_max"]))
+        traj_target = min(traj_target, n_prim)
+    except Exception:
+        pass
+
+    n_traj = traj_target
+
+    if budget <= n_traj:
+        return min(budget, n_traj), 1
+
+    n_shifts = max(1, budget // n_traj)
+
+    # Hard cap
+    while n_traj * n_shifts > budget and n_shifts > 1:
+        n_shifts -= 1
+    while n_traj * n_shifts > budget and n_traj > 1:
+        n_traj -= 1
+
+    return n_traj, n_shifts
+
+
 def exhaust_trajectories(dim: int) -> List[Tuple[int, ...]]:
     """Get the full primitive trajectory set for a given dimension.
 
-    dim=4: k_max=3, ~1,120 trajectories
-    dim=5: k_max=3, ~8,161 trajectories
-    dim=6: k_max=2, ~7,448 trajectories
-    dim=7: k_max=2, ~37,969 trajectories
-    dim=9: k_max=1, ~9,841 trajectories
+    Uses manual presets for known dims (4-9), auto-computes for others.
     """
-    preset = EXHAUST_PRESETS.get(dim)
-    if preset is None:
-        raise ValueError(f"No exhaust preset for dim={dim}. Available: {list(EXHAUST_PRESETS.keys())}")
+    preset = EXHAUST_PRESETS.get(dim) or _auto_preset(dim)
     return generate_primitive_trajectories(dim, preset["k_max"])
 
 
 def exhaust_shifts(dim: int, seed: int = 0) -> List[RationalShift]:
     """Get the full shift set for a given dimension.
 
-    Args:
-        dim: 4, 5, 6, 7, or 9.
-        seed: Sobol seed.
-
-    Returns:
-        List of unique RationalShift objects.
+    Uses manual presets for known dims (4-9), auto-computes for others.
     """
-    preset = EXHAUST_PRESETS.get(dim)
-    if preset is None:
-        raise ValueError(f"No exhaust preset for dim={dim}.")
-
+    preset = EXHAUST_PRESETS.get(dim) or _auto_preset(dim)
     n = preset["n_shifts_full"]
-
     return generate_unique_shifts(dim, n, seed=seed, mode="centered")
 
 
-# ── Summary / introspection ──────────────────────────────────────────────
+# ── Summary / introspection ──────────────────────────────────────────
 
 def exhaust_summary(dim: int) -> dict:
     """Return trajectory/shift counts and compute estimates for a dimension."""
+    preset = EXHAUST_PRESETS.get(dim) or _auto_preset(dim)
     trajs = exhaust_trajectories(dim)
-    preset = EXHAUST_PRESETS[dim]
     n_shifts = preset["n_shifts_full"]
     return {
         "dim": dim,
