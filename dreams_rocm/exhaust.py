@@ -231,16 +231,22 @@ def generate_unique_shifts_halves(
 # ── Preset exhaust configurations ────────────────────────────────────────
 
 EXHAUST_PRESETS = {
-    4: {"k_max": 3, "n_shifts_stage1": 64, "n_shifts_stage2": 256, "n_shifts_full": 512},
-    6: {"k_max": 2, "n_shifts_stage1": 64, "n_shifts_stage2": 256, "n_shifts_full": 1024},
+    4: {"k_max": 3, "n_shifts_full": 512},    # 2F2: ~1,120 traj
+    5: {"k_max": 3, "n_shifts_full": 512},    # 3F2: ~8,161 traj
+    6: {"k_max": 2, "n_shifts_full": 1024},   # 3F3: ~7,448 traj
+    7: {"k_max": 2, "n_shifts_full": 1024},   # 4F3: ~37,969 traj
+    9: {"k_max": 1, "n_shifts_full": 1024},   # 5F4: ~9,841 traj
 }
 
 
 def exhaust_trajectories(dim: int) -> List[Tuple[int, ...]]:
     """Get the full primitive trajectory set for a given dimension.
 
-    dim=4: k_max=3, ~1120 trajectories
-    dim=6: k_max=2, ~7448 trajectories
+    dim=4: k_max=3, ~1,120 trajectories
+    dim=5: k_max=3, ~8,161 trajectories
+    dim=6: k_max=2, ~7,448 trajectories
+    dim=7: k_max=2, ~37,969 trajectories
+    dim=9: k_max=1, ~9,841 trajectories
     """
     preset = EXHAUST_PRESETS.get(dim)
     if preset is None:
@@ -248,12 +254,11 @@ def exhaust_trajectories(dim: int) -> List[Tuple[int, ...]]:
     return generate_primitive_trajectories(dim, preset["k_max"])
 
 
-def exhaust_shifts(dim: int, stage: int = 3, seed: int = 0) -> List[RationalShift]:
-    """Get the shift set for a given dimension and stage.
+def exhaust_shifts(dim: int, seed: int = 0) -> List[RationalShift]:
+    """Get the full shift set for a given dimension.
 
     Args:
-        dim: 4 or 6.
-        stage: 1 (64 shifts), 2 (256 shifts), 3 (full: 512/1024 shifts).
+        dim: 4, 5, 6, 7, or 9.
         seed: Sobol seed.
 
     Returns:
@@ -263,14 +268,7 @@ def exhaust_shifts(dim: int, stage: int = 3, seed: int = 0) -> List[RationalShif
     if preset is None:
         raise ValueError(f"No exhaust preset for dim={dim}.")
 
-    if stage == 1:
-        n = preset["n_shifts_stage1"]
-    elif stage == 2:
-        n = preset["n_shifts_stage2"]
-    elif stage == 3:
-        n = preset["n_shifts_full"]
-    else:
-        raise ValueError(f"stage must be 1, 2, or 3 (got {stage})")
+    n = preset["n_shifts_full"]
 
     return generate_unique_shifts(dim, n, seed=seed, mode="centered")
 
@@ -281,24 +279,22 @@ def exhaust_summary(dim: int) -> dict:
     """Return trajectory/shift counts and compute estimates for a dimension."""
     trajs = exhaust_trajectories(dim)
     preset = EXHAUST_PRESETS[dim]
+    n_shifts = preset["n_shifts_full"]
     return {
         "dim": dim,
         "k_max": preset["k_max"],
         "n_trajectories": len(trajs),
-        "n_shifts_stage1": preset["n_shifts_stage1"],
-        "n_shifts_stage2": preset["n_shifts_stage2"],
-        "n_shifts_full": preset["n_shifts_full"],
-        "runs_stage1": len(trajs) * preset["n_shifts_stage1"],
-        "runs_stage2": len(trajs) * preset["n_shifts_stage2"],
-        "runs_full": len(trajs) * preset["n_shifts_full"],
+        "n_shifts": n_shifts,
+        "runs_per_cmf": len(trajs) * n_shifts,
     }
 
 
 if __name__ == "__main__":
-    for d in [4, 6]:
+    from .cmf_generator import FAMILY_CONFIG
+    for fam, cfg in FAMILY_CONFIG.items():
+        d = cfg["dim"]
         s = exhaust_summary(d)
-        print(f"\ndim={d}:")
-        print(f"  Trajectories: {s['n_trajectories']} (k_max={s['k_max']})")
-        print(f"  Stage 1:  {s['n_shifts_stage1']:>5} shifts × {s['n_trajectories']:>5} traj = {s['runs_stage1']:>10,} runs")
-        print(f"  Stage 2:  {s['n_shifts_stage2']:>5} shifts × {s['n_trajectories']:>5} traj = {s['runs_stage2']:>10,} runs")
-        print(f"  Stage 3:  {s['n_shifts_full']:>5} shifts × {s['n_trajectories']:>5} traj = {s['runs_full']:>10,} runs")
+        print(f"\n{fam} (dim={d}):")
+        print(f"  Trajectories: {s['n_trajectories']:>6,} (k_max={s['k_max']})")
+        print(f"  Shifts:       {s['n_shifts']:>6,}")
+        print(f"  Runs/CMF:     {s['runs_per_cmf']:>12,}")

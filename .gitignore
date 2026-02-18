@@ -44,5 +44,6 @@ verify_report.csv
 *.csv
 outputs/
 cmfs_exhaust.jsonl
+sweep_data/
 tasks/
 results/

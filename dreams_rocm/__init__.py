@@ -35,7 +35,12 @@ from .exhaust import (
     generate_primitive_trajectories, generate_unique_shifts,
     canonical_direction, RationalShift, EXHAUST_PRESETS,
 )
-from .cmf_generator import generate_2f2_specs, generate_3f3_specs, CMFSpec
+from .cmf_generator import (
+    generate_pFq_specs, generate_2f2_specs, generate_3f2_specs,
+    generate_3f3_specs, generate_4f3_specs, generate_5f4_specs,
+    build_pFq_companion_matrix, write_specs_chunked,
+    CMFSpec, FAMILY_CONFIG,
+)
 from .logging import RunLogger, RunManifest
 from .gpu_runner import GpuWalkRunner, check_gpu_availability
 
@@ -53,6 +58,9 @@ __all__ = [
     "exhaust_trajectories", "exhaust_shifts", "exhaust_summary",
     "generate_primitive_trajectories", "generate_unique_shifts",
     "canonical_direction", "RationalShift", "EXHAUST_PRESETS",
-    "generate_2f2_specs", "generate_3f3_specs", "CMFSpec",
+    "generate_pFq_specs", "generate_2f2_specs", "generate_3f2_specs",
+    "generate_3f3_specs", "generate_4f3_specs", "generate_5f4_specs",
+    "build_pFq_companion_matrix", "write_specs_chunked",
+    "CMFSpec", "FAMILY_CONFIG",
     "RunLogger", "RunManifest",
 ]

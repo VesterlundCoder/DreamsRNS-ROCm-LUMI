@@ -1,48 +1,49 @@
 """
-CMF spec generator for pFq hypergeometric families.
+Generic pFq CMF spec generator for hypergeometric families.
 
-Generates parametric CMF families for:
-  - 2F2 (rank 3, 3×3 matrices, dim=4 axes: x0,x1,y0,y1)
-  - 3F3 (rank 4, 4×4 matrices, dim=6 axes: x0,x1,x2,y0,y1,y2)
+Supported families:
+  - 2F2: rank=3, 3×3, dim=4
+  - 3F2: rank=4, 4×4, dim=5
+  - 3F3: rank=4, 4×4, dim=6
+  - 4F3: rank=5, 5×5, dim=7
+  - 5F4: rank=6, 6×6, dim=9
 
-Each spec is a JSON-serializable dict containing:
-  - name, rank, p, q, dim
-  - a_params, b_params (numerator/denominator Pochhammer parameters)
-  - matrix: dict of (row,col) -> SymPy expression string
-  - axis_names, directions
+Each spec is a JSON-serializable dict with:
+  name, rank, p, q, dim, a_params, b_params, z_str,
+  matrix (row,col -> SymPy expr string), axis_names, directions, spec_hash.
 
-The companion matrix for pFq is the standard (p+1)×(p+1) construction
-where the Pochhammer parameters define the recurrence.
+The companion matrix for pFq is the standard (max(p,q)+1)×(max(p,q)+1)
+construction where Pochhammer parameters define the recurrence.
 
 Usage:
-    python -m dreams_rocm.cmf_generator --n2f2 1000 --n3f3 1000 -o cmfs_exhaust.jsonl
+    python -m dreams_rocm.cmf_generator --family 2F2 --count 10000 -o cmfs_2F2/
+    python -m dreams_rocm.cmf_generator --all --count 10000 -o sweep_data/
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import itertools
 import hashlib
 from dataclasses import dataclass, asdict
 from fractions import Fraction
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Set
 
 import numpy as np
 
 
-# ── Parameter sampling ───────────────────────────────────────────────────
+# ── Parameter pool ───────────────────────────────────────────────────────
 
-# Small rational parameter pool for Pochhammer (a_i), (b_j)
-# These are typical in known PCF/CMF identities and cover good search space
-PARAM_POOL_INTEGERS = list(range(-5, 6))  # -5..5
-PARAM_POOL_HALVES = [Fraction(k, 2) for k in range(-9, 10)]  # -9/2..9/2
-PARAM_POOL_THIRDS = [Fraction(k, 3) for k in range(-6, 7)]   # -2..2 by 1/3
-PARAM_POOL_QUARTERS = [Fraction(k, 4) for k in range(-8, 9)]  # -2..2 by 1/4
+PARAM_POOL_INTEGERS = list(range(-5, 6))
+PARAM_POOL_HALVES   = [Fraction(k, 2) for k in range(-11, 12)]
+PARAM_POOL_THIRDS   = [Fraction(k, 3) for k in range(-8, 9)]
+PARAM_POOL_QUARTERS = [Fraction(k, 4) for k in range(-10, 11)]
+PARAM_POOL_SIXTHS   = [Fraction(k, 6) for k in range(-12, 13)]
 
-# Merged pool sorted by absolute value (prefer small params)
 def _build_param_pool() -> List[Fraction]:
-    pool = set()
+    pool: Set[Fraction] = set()
     for x in PARAM_POOL_INTEGERS:
         pool.add(Fraction(x))
     for x in PARAM_POOL_HALVES:
@@ -51,51 +52,54 @@ def _build_param_pool() -> List[Fraction]:
         pool.add(x)
     for x in PARAM_POOL_QUARTERS:
         pool.add(x)
-    # Remove 0 and negative integers (Pochhammer diverges)
+    for x in PARAM_POOL_SIXTHS:
+        pool.add(x)
+    # Remove 0 and negative integers (Pochhammer poles)
     pool = {x for x in pool if x != 0 and not (x < 0 and x.denominator == 1)}
     return sorted(pool, key=lambda x: (abs(x), x))
 
 PARAM_POOL = _build_param_pool()
+
+# Tiered pools: prefer small parameters in systematic phase
+POOL_TIER1 = [x for x in PARAM_POOL if abs(x) <= Fraction(2, 1)]   # ~35 params
+POOL_TIER2 = [x for x in PARAM_POOL if abs(x) <= Fraction(3, 1)]   # ~55 params
+POOL_TIER3 = PARAM_POOL                                              # ~90 params
 
 
 @dataclass
 class CMFSpec:
     """Specification for a single CMF family."""
     name: str
-    rank: int        # matrix size = rank
-    p: int           # numerator parameter count
-    q: int           # denominator parameter count
-    dim: int         # p + q (number of walk axes)
-    a_params: List[str]  # numerator Pochhammer params as strings
-    b_params: List[str]  # denominator Pochhammer params as strings
-    z_str: str       # argument z (usually "1" or "-1" or polynomial)
-    matrix: Dict[str, str]  # "(row,col)" -> sympy expr string
+    rank: int
+    p: int
+    q: int
+    dim: int
+    a_params: List[str]
+    b_params: List[str]
+    z_str: str
+    matrix: Dict[str, str]
     axis_names: List[str]
-    directions: List[int]  # default direction (all 1s)
-    spec_hash: str   # deterministic hash for dedup
+    directions: List[int]
+    spec_hash: str
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
+# ── Validation & hashing ─────────────────────────────────────────────────
+
 def _spec_hash(p: int, q: int, a_params: List[Fraction], b_params: List[Fraction], z: str) -> str:
-    """Deterministic hash for dedup."""
     key = f"{p}F{q}|a={sorted(str(x) for x in a_params)}|b={sorted(str(x) for x in b_params)}|z={z}"
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 def _is_valid_pFq(a_params: List[Fraction], b_params: List[Fraction]) -> bool:
-    """Check if parameters give a valid (non-degenerate) pFq."""
-    # b_params must not be non-positive integers (poles of Gamma)
+    """Check validity: no b=non-positive-int, no a_i==b_j, all distinct within group."""
     for b in b_params:
         if b.denominator == 1 and b <= 0:
             return False
-    # a_i must not equal any b_j (trivial cancellation)
-    a_set = set(a_params)
-    b_set = set(b_params)
-    if a_set & b_set:
+    if set(a_params) & set(b_params):
         return False
-    # All params must be distinct within their group
     if len(set(a_params)) != len(a_params):
         return False
     if len(set(b_params)) != len(b_params):
@@ -103,304 +107,228 @@ def _is_valid_pFq(a_params: List[Fraction], b_params: List[Fraction]) -> bool:
     return True
 
 
-# ── 2F2 companion matrix (3×3, rank=3, dim=4) ───────────────────────────
+# ── Generic pFq companion matrix builder ─────────────────────────────────
 
-def _build_2f2_matrix(a1: Fraction, a2: Fraction, b1: Fraction, b2: Fraction) -> Dict[str, str]:
-    """Build the 3×3 companion matrix for 2F2(a1,a2; b1,b2; z).
+def _product_str(n: str, params: List[Fraction]) -> str:
+    """Build string for product of (n + param_i) terms."""
+    factors = [f"({n} + {p})" for p in params]
+    return " * ".join(factors)
 
-    The recurrence for 2F2 gives a 3-term relation which maps to a 3×3
-    companion matrix acting on [T_{n+2}, T_{n+1}, T_n]^T.
 
-    Axes: x0 = n (step), x1 = k (unused but available), y0, y1 (shift params).
+def _sum_of_k_products_str(n: str, params: List[Fraction], k: int) -> str:
+    """Build string for elementary symmetric polynomial e_k of (n+param_i)."""
+    terms = []
+    for combo in itertools.combinations(params, k):
+        factors = [f"({n} + {p})" for p in combo]
+        terms.append(" * ".join(factors))
+    if not terms:
+        return "0"
+    return " + ".join(terms)
 
-    The matrix entries are polynomials in n (loaded via LOAD_X with axis=0).
-    We use the standard contiguous relation for generalized hypergeometric:
 
-      (n+b1)(n+b2) T_{n+1} = [(2n+1)(stuff) + ...] T_n - (n+a1)(n+a2) z T_{n-1}
+def build_pFq_companion_matrix(
+    p: int,
+    q: int,
+    a_params: List[Fraction],
+    b_params: List[Fraction],
+) -> Dict[str, str]:
+    """Build the generic (r×r) companion matrix for pFq.
 
-    For the companion matrix M(n), we write the recurrence as:
-      [T_{n+1}]     [0  (n+a1)(n+a2)*z / ((n+b1)(n+b2))   0 ] [T_n    ]
-      [T_n    ]  =  [1  0                                   0 ] [T_{n-1}]
-      [1      ]     [0  0                                   1 ] [1      ]
+    The matrix size r = max(p, q) + 1.
 
-    But for CMF walks, we use the full polynomial form without division.
+    Structure (last-column form):
+      - Sub-diagonal is 1 (shift register)
+      - Last column contains the recurrence coefficients
+      - All other entries are 0
+
+    For the (r-1)-term recurrence of pFq:
+      Row 0, col r-1:     (-1)^? * prod(n + a_i)
+      Row k, col r-1:     intermediate coefficient (symmetric polynomials)
+      Row r-1, col r-1:   prod(n + b_j)
     """
-    # For a generic pFq companion matrix, the standard approach uses
-    # the Pochhammer-shifted form. We build explicit polynomial entries.
-    n = "n"  # will be mapped to axis x0
+    r = max(p, q) + 1
+    n = "n"
+    matrix: Dict[str, str] = {}
 
-    # Numerator rising factorials: product of (n + a_i)
-    num_factors = [f"({n} + {a1})", f"({n} + {a2})"]
-    # Denominator rising factorials: product of (n + b_j)
-    den_factors = [f"({n} + {b1})", f"({n} + {b2})"]
+    # Fill with zeros and sub-diagonal ones
+    for i in range(r):
+        for j in range(r):
+            if i == j + 1:
+                matrix[f"{i},{j}"] = "1"
+            else:
+                matrix[f"{i},{j}"] = "0"
 
-    # 3×3 companion matrix for the 3-term recurrence
-    # M(n) = [[0, b(n)], [1, a(n)]] generalized to rank 3
-    #
-    # Standard form:
-    # Row 0: [0, 0, -(n+a1)*(n+a2)]
-    # Row 1: [1, 0, (n+b1)*(n+b2) + (n+a1)*(n+a2)]
-    # Row 2: [0, 1, ... middle coefficient ...]
-    #
-    # Actually for pFq the companion matrix is simpler:
-    # Use the standard (p+1)×(p+1) form where p=q=2
-    matrix = {}
+    # Last column: recurrence coefficients
+    # Row 0: numerator Pochhammer product (sign depends on convention)
+    an_prod = _product_str(n, a_params) if a_params else "1"
+    bn_prod = _product_str(n, b_params) if b_params else "1"
 
-    # The 3×3 companion for 2F2:
-    # Column 0 (shift): identity-like
-    # We use the Euler/Gauss-style continued fraction companion:
-    #
-    # M(n) acts on [p_{n}, p_{n-1}, p_{n-2}]
-    # This is the generalized [[0, b(n)], [1, a(n)]] for rank 3
+    # The standard companion has:
+    # - Top-right: ±prod(n+a_i)    (numerator rising factorial)
+    # - Bottom-right: prod(n+b_j)  (denominator rising factorial)
+    # - Middle rows: differences of elementary symmetric polynomials
 
-    # Numerator product
-    an_prod = f"({n} + {a1}) * ({n} + {a2})"
-    # Denominator product
-    bn_prod = f"({n} + {b1}) * ({n} + {b2})"
+    if r == 2:
+        # Simple 2×2 (1F1 or 2F1 reduced): [[0, a_prod], [1, b_prod]]
+        matrix[f"0,{r-1}"] = an_prod
+        matrix[f"1,{r-1}"] = bn_prod
+    else:
+        # General r×r companion
+        # Row 0: numerator product
+        matrix[f"0,{r-1}"] = an_prod
 
-    # Companion matrix (column-major convention matching our walk):
-    # [[   0,         0,    -(n+a1)(n+a2)  ],
-    #  [   1,         0,     c_middle       ],
-    #  [   0,         1,     (n+b1)(n+b2)   ]]
-    #
-    # where c_middle encodes the 3-term recurrence coefficient
+        # Middle rows: mixed coefficients from symmetric polynomial differences
+        for row in range(1, r - 1):
+            # Coefficient for row `row` in the last column
+            # Uses elementary symmetric polynomials of degree (r-1-row)
+            k = r - 1 - row
+            bn_ek = _sum_of_k_products_str(n, b_params, k) if k <= len(b_params) else "0"
+            an_ek = _sum_of_k_products_str(n, a_params, k) if k <= len(a_params) else "0"
+            matrix[f"{row},{r-1}"] = f"({bn_ek}) - ({an_ek})"
 
-    # Middle coefficient for 2F2: involves sum of products
-    # c = (2n+1)(a1+a2+b1+b2)/2 - ... (simplified for standard 2F2)
-    # For generality, use: c_mid = (n+b1)(n+b2) + (n+a1)(n+a2) - n*(n+1)
-    # This is a standard form that works for convergent extraction
-
-    c_mid = f"({bn_prod}) + ({an_prod}) - {n}*({n} + 1)"
-
-    matrix["0,0"] = "0"
-    matrix["0,1"] = "0"
-    matrix["0,2"] = f"-({an_prod})"
-    matrix["1,0"] = "1"
-    matrix["1,1"] = "0"
-    matrix["1,2"] = c_mid
-    matrix["2,0"] = "0"
-    matrix["2,1"] = "1"
-    matrix["2,2"] = bn_prod
+        # Last row: denominator product
+        matrix[f"{r-1},{r-1}"] = bn_prod
 
     return matrix
 
 
-def generate_2f2_specs(
-    n_specs: int = 1000,
+# ── Family metadata ──────────────────────────────────────────────────────
+
+FAMILY_CONFIG = {
+    "2F2": {"p": 2, "q": 2, "rank": 3, "dim": 4},
+    "3F2": {"p": 3, "q": 2, "rank": 4, "dim": 5},
+    "3F3": {"p": 3, "q": 3, "rank": 4, "dim": 6},
+    "4F3": {"p": 4, "q": 3, "rank": 5, "dim": 7},
+    "5F4": {"p": 5, "q": 4, "rank": 6, "dim": 9},
+}
+
+
+def _axis_names(p: int, q: int) -> List[str]:
+    names = [f"x{i}" for i in range(p)] + [f"y{j}" for j in range(q)]
+    return names
+
+
+# ── Generic pFq spec generator ───────────────────────────────────────────
+
+def generate_pFq_specs(
+    p: int,
+    q: int,
+    n_specs: int = 10000,
     seed: int = 42,
 ) -> List[CMFSpec]:
-    """Generate n_specs unique 2F2 CMF specifications.
+    """Generate n_specs unique pFq CMF specifications.
 
-    Systematically enumerates parameter combinations from PARAM_POOL,
-    filters for validity, deduplicates, and returns up to n_specs.
+    Two-phase strategy:
+      Phase 1: Systematic enumeration of small-parameter combos (tier 1 → tier 2)
+      Phase 2: Random sampling from full pool to fill remaining
     """
     rng = np.random.default_rng(seed)
-    pool = PARAM_POOL
-    seen_hashes: set = set()
+    n_a = p
+    n_b = q
+    rank = max(p, q) + 1
+    dim = p + q
+    family_name = f"{p}F{q}"
+    axes = _axis_names(p, q)
+    directions = [1] * dim
+
+    seen_hashes: Set[str] = set()
     specs: List[CMFSpec] = []
 
-    # Strategy: enumerate small params first, then sample from larger pool
-    # Phase 1: systematic enumeration of "nice" params
-    nice_params = [x for x in pool if abs(x) <= Fraction(3, 1)]
+    def _try_add(a_list: List[Fraction], b_list: List[Fraction]) -> bool:
+        a_sorted = sorted(a_list)
+        b_sorted = sorted(b_list)
+        if not _is_valid_pFq(a_sorted, b_sorted):
+            return False
+        h = _spec_hash(p, q, a_sorted, b_sorted, "1")
+        if h in seen_hashes:
+            return False
+        seen_hashes.add(h)
 
-    for a1, a2 in itertools.combinations(nice_params, 2):
+        matrix = build_pFq_companion_matrix(p, q, a_sorted, b_sorted)
+        a_strs = [str(x) for x in a_sorted]
+        b_strs = [str(x) for x in b_sorted]
+
+        spec = CMFSpec(
+            name=f"{family_name}({','.join(a_strs)};{','.join(b_strs)})",
+            rank=rank, p=p, q=q, dim=dim,
+            a_params=a_strs, b_params=b_strs, z_str="1",
+            matrix=matrix, axis_names=axes, directions=directions,
+            spec_hash=h,
+        )
+        specs.append(spec)
+        return True
+
+    # Phase 1: Systematic enumeration through tiered pools
+    for tier_pool in [POOL_TIER1, POOL_TIER2, POOL_TIER3]:
         if len(specs) >= n_specs:
             break
-        for b1, b2 in itertools.combinations(nice_params, 2):
+        for combo_a in itertools.combinations(tier_pool, n_a):
             if len(specs) >= n_specs:
                 break
+            a_list = list(combo_a)
+            for combo_b in itertools.combinations(tier_pool, n_b):
+                if len(specs) >= n_specs:
+                    break
+                _try_add(a_list, list(combo_b))
 
-            a_list = sorted([a1, a2])
-            b_list = sorted([b1, b2])
-
-            if not _is_valid_pFq(a_list, b_list):
-                continue
-
-            h = _spec_hash(2, 2, a_list, b_list, "1")
-            if h in seen_hashes:
-                continue
-            seen_hashes.add(h)
-
-            a_strs = [str(x) for x in a_list]
-            b_strs = [str(x) for x in b_list]
-
-            matrix = _build_2f2_matrix(a1, a2, b1, b2)
-
-            spec = CMFSpec(
-                name=f"2F2({','.join(a_strs)};{','.join(b_strs)})",
-                rank=3,
-                p=2, q=2,
-                dim=4,
-                a_params=a_strs,
-                b_params=b_strs,
-                z_str="1",
-                matrix=matrix,
-                axis_names=["x0", "x1", "y0", "y1"],
-                directions=[1, 1, 1, 1],
-                spec_hash=h,
-            )
-            specs.append(spec)
-
-    # Phase 2: random sampling if still short
-    if len(specs) < n_specs:
-        for _ in range(n_specs * 10):
-            if len(specs) >= n_specs:
-                break
-            idxs = rng.choice(len(pool), size=4, replace=False)
-            a1, a2 = sorted([pool[idxs[0]], pool[idxs[1]]])
-            b1, b2 = sorted([pool[idxs[2]], pool[idxs[3]]])
-
-            if not _is_valid_pFq([a1, a2], [b1, b2]):
-                continue
-            h = _spec_hash(2, 2, [a1, a2], [b1, b2], "1")
-            if h in seen_hashes:
-                continue
-            seen_hashes.add(h)
-
-            a_strs = [str(x) for x in [a1, a2]]
-            b_strs = [str(x) for x in [b1, b2]]
-            matrix = _build_2f2_matrix(a1, a2, b1, b2)
-
-            spec = CMFSpec(
-                name=f"2F2({','.join(a_strs)};{','.join(b_strs)})",
-                rank=3, p=2, q=2, dim=4,
-                a_params=a_strs, b_params=b_strs, z_str="1",
-                matrix=matrix,
-                axis_names=["x0", "x1", "y0", "y1"],
-                directions=[1, 1, 1, 1],
-                spec_hash=h,
-            )
-            specs.append(spec)
+    # Phase 2: Random sampling from full pool
+    attempts = 0
+    max_attempts = n_specs * 50
+    while len(specs) < n_specs and attempts < max_attempts:
+        attempts += 1
+        total_params = n_a + n_b
+        idxs = rng.choice(len(PARAM_POOL), size=total_params, replace=False)
+        a_list = [PARAM_POOL[i] for i in idxs[:n_a]]
+        b_list = [PARAM_POOL[i] for i in idxs[n_a:]]
+        _try_add(a_list, b_list)
 
     return specs[:n_specs]
 
 
-# ── 3F3 companion matrix (4×4, rank=4, dim=6) ───────────────────────────
+# ── Convenience wrappers (backward compat) ───────────────────────────────
 
-def _build_3f3_matrix(
-    a1: Fraction, a2: Fraction, a3: Fraction,
-    b1: Fraction, b2: Fraction, b3: Fraction,
-) -> Dict[str, str]:
-    """Build the 4×4 companion matrix for 3F3(a1,a2,a3; b1,b2,b3; z).
+def generate_2f2_specs(n_specs: int = 10000, seed: int = 42) -> List[CMFSpec]:
+    return generate_pFq_specs(2, 2, n_specs, seed)
 
-    4×4 companion for the 4-term recurrence.
+def generate_3f2_specs(n_specs: int = 10000, seed: int = 100) -> List[CMFSpec]:
+    return generate_pFq_specs(3, 2, n_specs, seed)
+
+def generate_3f3_specs(n_specs: int = 10000, seed: int = 137) -> List[CMFSpec]:
+    return generate_pFq_specs(3, 3, n_specs, seed)
+
+def generate_4f3_specs(n_specs: int = 10000, seed: int = 200) -> List[CMFSpec]:
+    return generate_pFq_specs(4, 3, n_specs, seed)
+
+def generate_5f4_specs(n_specs: int = 10000, seed: int = 300) -> List[CMFSpec]:
+    return generate_pFq_specs(5, 4, n_specs, seed)
+
+
+# ── Batch file writer (split into chunks of chunk_size) ──────────────────
+
+def write_specs_chunked(
+    specs: List[CMFSpec],
+    family_name: str,
+    output_dir: str,
+    chunk_size: int = 1000,
+) -> List[str]:
+    """Write specs to JSONL files, split into chunks.
+
+    Returns list of written file paths.
     """
-    n = "n"
+    os.makedirs(output_dir, exist_ok=True)
+    paths = []
+    n_chunks = math.ceil(len(specs) / chunk_size)
 
-    an_prod = f"({n} + {a1}) * ({n} + {a2}) * ({n} + {a3})"
-    bn_prod = f"({n} + {b1}) * ({n} + {b2}) * ({n} + {b3})"
+    for i in range(n_chunks):
+        chunk = specs[i * chunk_size : (i + 1) * chunk_size]
+        fname = f"{family_name}_part{i:02d}.jsonl"
+        fpath = os.path.join(output_dir, fname)
+        with open(fpath, 'w') as f:
+            for spec in chunk:
+                f.write(json.dumps(spec.to_dict(), default=str) + "\n")
+        paths.append(fpath)
 
-    # Middle coefficients for 4-term recurrence
-    # c2 involves cross terms
-    an_sum2 = f"({n} + {a1})*({n} + {a2}) + ({n} + {a1})*({n} + {a3}) + ({n} + {a2})*({n} + {a3})"
-    bn_sum2 = f"({n} + {b1})*({n} + {b2}) + ({n} + {b1})*({n} + {b3}) + ({n} + {b2})*({n} + {b3})"
-
-    c2 = f"({bn_sum2}) - ({an_sum2})"
-    c3 = f"({bn_prod}) + ({an_prod}) - {n}*({n}+1)*({n}+2)"
-
-    matrix = {}
-    # 4×4 companion:
-    # [[0, 0, 0, (n+a1)(n+a2)(n+a3)   ],
-    #  [1, 0, 0, c2                     ],
-    #  [0, 1, 0, c3                     ],
-    #  [0, 0, 1, (n+b1)(n+b2)(n+b3)    ]]
-    matrix["0,0"] = "0"
-    matrix["0,1"] = "0"
-    matrix["0,2"] = "0"
-    matrix["0,3"] = an_prod
-    matrix["1,0"] = "1"
-    matrix["1,1"] = "0"
-    matrix["1,2"] = "0"
-    matrix["1,3"] = c2
-    matrix["2,0"] = "0"
-    matrix["2,1"] = "1"
-    matrix["2,2"] = "0"
-    matrix["2,3"] = c3
-    matrix["3,0"] = "0"
-    matrix["3,1"] = "0"
-    matrix["3,2"] = "1"
-    matrix["3,3"] = bn_prod
-
-    return matrix
-
-
-def generate_3f3_specs(
-    n_specs: int = 1000,
-    seed: int = 137,
-) -> List[CMFSpec]:
-    """Generate n_specs unique 3F3 CMF specifications."""
-    rng = np.random.default_rng(seed)
-    pool = PARAM_POOL
-    seen_hashes: set = set()
-    specs: List[CMFSpec] = []
-
-    # Smaller nice pool for 3F3 (6 params means combinatorial explosion)
-    nice_params = [x for x in pool if abs(x) <= Fraction(2, 1)]
-
-    # Phase 1: systematic
-    for combo_a in itertools.combinations(nice_params, 3):
-        if len(specs) >= n_specs:
-            break
-        a_list = sorted(combo_a)
-        for combo_b in itertools.combinations(nice_params, 3):
-            if len(specs) >= n_specs:
-                break
-            b_list = sorted(combo_b)
-
-            if not _is_valid_pFq(list(a_list), list(b_list)):
-                continue
-            h = _spec_hash(3, 3, list(a_list), list(b_list), "1")
-            if h in seen_hashes:
-                continue
-            seen_hashes.add(h)
-
-            a_strs = [str(x) for x in a_list]
-            b_strs = [str(x) for x in b_list]
-            matrix = _build_3f3_matrix(*a_list, *b_list)
-
-            spec = CMFSpec(
-                name=f"3F3({','.join(a_strs)};{','.join(b_strs)})",
-                rank=4, p=3, q=3, dim=6,
-                a_params=a_strs, b_params=b_strs, z_str="1",
-                matrix=matrix,
-                axis_names=["x0", "x1", "x2", "y0", "y1", "y2"],
-                directions=[1, 1, 1, 1, 1, 1],
-                spec_hash=h,
-            )
-            specs.append(spec)
-
-    # Phase 2: random sampling
-    if len(specs) < n_specs:
-        for _ in range(n_specs * 20):
-            if len(specs) >= n_specs:
-                break
-            idxs = rng.choice(len(pool), size=6, replace=False)
-            a_list = sorted([pool[idxs[0]], pool[idxs[1]], pool[idxs[2]]])
-            b_list = sorted([pool[idxs[3]], pool[idxs[4]], pool[idxs[5]]])
-
-            if not _is_valid_pFq(list(a_list), list(b_list)):
-                continue
-            h = _spec_hash(3, 3, list(a_list), list(b_list), "1")
-            if h in seen_hashes:
-                continue
-            seen_hashes.add(h)
-
-            a_strs = [str(x) for x in a_list]
-            b_strs = [str(x) for x in b_list]
-            matrix = _build_3f3_matrix(*a_list, *b_list)
-
-            spec = CMFSpec(
-                name=f"3F3({','.join(a_strs)};{','.join(b_strs)})",
-                rank=4, p=3, q=3, dim=6,
-                a_params=a_strs, b_params=b_strs, z_str="1",
-                matrix=matrix,
-                axis_names=["x0", "x1", "x2", "y0", "y1", "y2"],
-                directions=[1, 1, 1, 1, 1, 1],
-                spec_hash=h,
-            )
-            specs.append(spec)
-
-    return specs[:n_specs]
+    return paths
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
@@ -408,36 +336,48 @@ def generate_3f3_specs(
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generate CMF specs for exhaust sweep")
-    parser.add_argument("--n2f2", type=int, default=1000, help="Number of 2F2 specs")
-    parser.add_argument("--n3f3", type=int, default=1000, help="Number of 3F3 specs")
-    parser.add_argument("-o", "--output", type=str, default="cmfs_exhaust.jsonl",
-                        help="Output JSONL file")
-    parser.add_argument("--seed2", type=int, default=42, help="Seed for 2F2")
-    parser.add_argument("--seed3", type=int, default=137, help="Seed for 3F3")
+    parser = argparse.ArgumentParser(description="Generate pFq CMF specs for LUMI exhaust sweep")
+    parser.add_argument("--family", type=str, default=None,
+                        choices=list(FAMILY_CONFIG.keys()),
+                        help="Single family to generate (or use --all)")
+    parser.add_argument("--all", action="store_true",
+                        help="Generate all 5 families")
+    parser.add_argument("--count", type=int, default=10000,
+                        help="Number of CMFs per family")
+    parser.add_argument("--chunk-size", type=int, default=1000,
+                        help="CMFs per output file")
+    parser.add_argument("-o", "--output-dir", type=str, default="sweep_data",
+                        help="Output directory")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Base seed (offset per family)")
     args = parser.parse_args()
 
-    specs_2f2 = generate_2f2_specs(args.n2f2, seed=args.seed2)
-    specs_3f3 = generate_3f3_specs(args.n3f3, seed=args.seed3)
+    if not args.all and args.family is None:
+        parser.error("Specify --family or --all")
 
-    all_specs = specs_2f2 + specs_3f3
+    families = list(FAMILY_CONFIG.keys()) if args.all else [args.family]
+    seed_offsets = {"2F2": 0, "3F2": 100, "3F3": 200, "4F3": 300, "5F4": 400}
 
-    with open(args.output, 'w') as f:
-        for spec in all_specs:
-            f.write(json.dumps(spec.to_dict(), default=str) + "\n")
+    grand_total = 0
+    for fam in families:
+        cfg = FAMILY_CONFIG[fam]
+        seed = args.seed + seed_offsets.get(fam, 0)
+        print(f"\n{'='*60}")
+        print(f"Generating {args.count} {fam} specs (p={cfg['p']}, q={cfg['q']}, "
+              f"rank={cfg['rank']}, dim={cfg['dim']}) ...")
 
-    print(f"Generated {len(specs_2f2)} 2F2 specs + {len(specs_3f3)} 3F3 specs")
-    print(f"  Total: {len(all_specs)} CMFs → {args.output}")
+        specs = generate_pFq_specs(cfg["p"], cfg["q"], args.count, seed)
+        fam_dir = os.path.join(args.output_dir, fam)
+        paths = write_specs_chunked(specs, fam, fam_dir, args.chunk_size)
 
-    # Summary
-    from .exhaust import exhaust_summary
-    for d in [4, 6]:
-        s = exhaust_summary(d)
-        n_cmfs = len(specs_2f2) if d == 4 else len(specs_3f3)
-        print(f"\n  dim={d}: {n_cmfs} CMFs × {s['n_trajectories']} traj × stages:")
-        print(f"    Stage 1: {s['n_shifts_stage1']:>5} shifts → {n_cmfs * s['runs_stage1']:>12,} total runs")
-        print(f"    Stage 2: {s['n_shifts_stage2']:>5} shifts → {n_cmfs * s['runs_stage2']:>12,} total runs")
-        print(f"    Stage 3: {s['n_shifts_full']:>5} shifts → {n_cmfs * s['runs_full']:>12,} total runs")
+        print(f"  Generated: {len(specs)} unique specs")
+        print(f"  Files:     {len(paths)} × {args.chunk_size} → {fam_dir}/")
+        for p in paths:
+            print(f"    {os.path.basename(p)}")
+        grand_total += len(specs)
+
+    print(f"\n{'='*60}")
+    print(f"TOTAL: {grand_total} CMFs across {len(families)} families → {args.output_dir}/")
 
 
 if __name__ == "__main__":
