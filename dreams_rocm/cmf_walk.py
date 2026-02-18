@@ -390,3 +390,129 @@ def run_cmf_walk(
         'log_scale': log_scale,
         'primes': pp,
     }
+
+
+# ── Batch CMF walk (GPU native or CPU fallback) ─────────────────────────
+
+def run_cmf_walk_batch(
+    program: CmfProgram,
+    depth: int,
+    K: int = 32,
+    shift_val_list: Optional[List[List[int]]] = None,
+    batch_size: int = 128,
+) -> List[Dict[str, Any]]:
+    """Run B r×r CMF walks, each with per-axis shifts.
+
+    Uses the native RNS-ROCm fused walk kernel when available (GPU path).
+    Falls back to CPU walker otherwise.
+
+    Args:
+        program:        compiled CmfProgram (any rank r)
+        depth:          walk depth
+        K:              number of RNS primes
+        shift_val_list: list of per-axis shift vectors, each len=dim
+        batch_size:     max simultaneous walks per GPU batch
+
+    Returns:
+        List of result dicts, one per shift vector:
+          p_residues, q_residues, p_float, q_float, log_scale, primes
+    """
+    dim = program.dim
+    if shift_val_list is None:
+        shift_val_list = [[1] * dim]
+
+    # Try native GPU path
+    try:
+        from .rns.bindings import HAS_NATIVE_RNS
+        if HAS_NATIVE_RNS:
+            return _run_cmf_walk_batch_native(
+                program, depth, K, shift_val_list, batch_size)
+    except ImportError:
+        pass
+
+    # CPU fallback: walk each shift sequentially
+    return [run_cmf_walk(program, depth, K, sv) for sv in shift_val_list]
+
+
+def _run_cmf_walk_batch_native(
+    program: CmfProgram,
+    depth: int,
+    K: int,
+    shift_val_list: List[List[int]],
+    batch_size: int,
+) -> List[Dict[str, Any]]:
+    """Batch walk using native RNS-ROCm fused kernel.
+
+    The native kernel handles all B shifts × K primes × depth steps
+    in a single GPU launch per batch.
+    """
+    from .rns import run_walk
+    from .rns.reference import generate_primes
+
+    r = program.m
+    dim = program.dim
+    primes = np.array(generate_primes(K, near_top=True), dtype=np.uint32)
+
+    # Build native Program object from CmfProgram
+    from .rns import Program as NativeProgram
+    native_prog = NativeProgram(
+        m=r, dim=dim,
+        instructions=program.instructions,
+        out_reg=program.out_reg,
+        n_reg=program.n_reg,
+        constants=program.constants,
+        directions=program.directions,
+    )
+    native_prog.make_const_table(K, primes)
+
+    all_results = []
+
+    for batch_start in range(0, len(shift_val_list), batch_size):
+        batch_svs = shift_val_list[batch_start : batch_start + batch_size]
+        B = len(batch_svs)
+
+        shifts_np = np.array(batch_svs, dtype=np.int32)  # (B, dim)
+        dirs_np = np.array(program.directions, dtype=np.int32)  # (dim,)
+
+        depth1 = depth // 2
+        depth2 = depth
+
+        result = run_walk(
+            native_prog, shifts_np, dirs_np, primes,
+            depth, depth1, depth2)
+
+        # Extract per-walk results
+        P_final = result['P_final']  # (B, E) where E = m*m
+        alive = result['alive']      # (B,)
+        E = r * r
+
+        # For CRT, we need residues per prime — native kernel returns mod p0 only
+        # For full RNS, fall back to CPU walk
+        # Native kernel is primarily for fast screening (delta proxy)
+        for bi in range(B):
+            if alive[bi]:
+                # P_final[bi] is flattened r×r matrix mod p0
+                P_flat = P_final[bi].reshape(r, r)
+                p_res = np.array([int(P_flat[0, r-1])], dtype=np.int64)
+                q_res = np.array([int(P_flat[r-1, r-1])], dtype=np.int64)
+                est_float = result.get('est2', np.zeros(B))[bi]
+                delta_float = result.get('delta2', np.zeros(B))[bi]
+            else:
+                p_res = np.zeros(1, dtype=np.int64)
+                q_res = np.zeros(1, dtype=np.int64)
+                est_float = float('nan')
+                delta_float = float('-inf')
+
+            all_results.append({
+                'p_residues': p_res,
+                'q_residues': q_res,
+                'p_float': float(est_float),
+                'q_float': 1.0,
+                'log_scale': 0.0,
+                'primes': primes.astype(np.int64),
+                'shift_vals': list(batch_svs[bi]),
+                'delta_proxy': float(delta_float),
+                'alive': bool(alive[bi]),
+            })
+
+    return all_results
