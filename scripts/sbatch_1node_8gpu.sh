@@ -131,17 +131,17 @@ fi
 # 2. Full verification run
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Full run (depth=2000, K=64) ==="
+echo "=== Full run (depth=2000, K=32) ==="
 
 if [ "${USE_CONTAINER}" = "1" ]; then
     run_cmd /workspace/scripts/euler2ai_verify.py \
         --input "${INPUT_FILE}" \
-        --depth 2000 --K 64 --max-tasks 0 \
+        --depth 2000 --K 32 --max-tasks 0 \
         --output /output/full_report.csv
 else
     python3 "${REPO_DIR}/scripts/euler2ai_verify.py" \
         --input "${INPUT_HOST}" \
-        --depth 2000 --K 64 --max-tasks 0 \
+        --depth 2000 --K 32 --max-tasks 0 \
         --output "${OUTPUT_DIR}/full_report.csv"
 fi
 

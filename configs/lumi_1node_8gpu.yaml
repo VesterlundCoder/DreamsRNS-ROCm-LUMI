@@ -22,7 +22,7 @@ primary_target: "zeta3"
 
 # --- RNS configuration ---
 rns:
-  K: 64                    # Number of 31-bit primes (64 × 31 = 1984 bits capacity)
+  K: 32                    # Number of 31-bit primes (32 × 31 = 992 bits capacity)
   K_small: 6               # Primes for partial CRT delta proxy
   prime_method: "near_top" # "near_top" or "prng"
 

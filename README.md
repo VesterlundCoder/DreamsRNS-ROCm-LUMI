@@ -34,19 +34,19 @@ result = verify_pcf(
     b_str="n**2",
     limit_str="2/(4 - pi)",
     depth=2000,
-    K=64,
+    K=32,
 )
 print(f"δ_exact = {result['delta_exact']:.6f}")   # ≈ -1.000291
 print(f"δ_float = {result['delta_float']:.6f}")   # ≈ -0.998855
-print(f"p bits  = {result['p_bits']}")             # 1984
+print(f"p bits  = {result['p_bits']}")             # 992
 ```
 
 ### Verification Results
 
 | Dataset | PCFs | Limit matches | Depth | K |
 |---------|------|---------------|-------|----- |
-| pcfs.json (Euler2AI) | 10/10 | 10/10 (100%) | 2000 | 64 |
-| Built-in test PCFs | 4/4 | 4/4 (100%) | 2000 | 64 |
+| pcfs.json (Euler2AI) | 10/10 | 10/10 (100%) | 2000 | 32 |
+| Built-in test PCFs | 4/4 | 4/4 (100%) | 2000 | 32 |
 
 ### Pipeline Architecture
 
@@ -56,7 +56,7 @@ print(f"p bits  = {result['p_bits']}")             # 1984
 └────────────────────┬─────────────────────────────────────┘
                      ▼
 ┌──────────────────────────────────────────────────────────┐
-│  RNS WALK (vectorised across K=64 primes)                │
+│  RNS WALK (vectorised across K=32 primes)                │
 │                                                          │
 │  A = [[1, a(0)], [0, 1]]   ← initial values             │
 │  for step in 1..depth:                                   │
@@ -278,7 +278,7 @@ Key sections:
 ```yaml
 # RNS configuration
 rns:
-  K: 64           # 64 primes × 31 bits = 1984-bit capacity
+  K: 32           # 32 primes × 31 bits = 992-bit capacity
   K_small: 6      # Primes for fast partial CRT
 
 # Walk parameters
@@ -356,7 +356,7 @@ cmf_families:
 
 ### RNS (Residue Number System)
 
-All integer computations use RNS representation with K = 64 coprime 31-bit primes, giving **1,984-bit integer capacity**. Operations per prime are independent — ideal for GPU parallelism.
+All integer computations use RNS representation with K = 32 coprime 31-bit primes, giving **992-bit integer capacity**. Operations per prime are independent — ideal for GPU parallelism.
 
 ### Trajectory Normalization
 
