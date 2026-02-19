@@ -10,24 +10,26 @@ namespace rns {
 // Layout: [K][B][E] where E = m*m, row-major within each matrix
 
 void matmul_mod_m4(const u32* A, const u32* B, u32* C, 
-                   const PrimeMeta* pm, int K, int B);
+                   const PrimeMeta* pm, int K, int Batch);
 
 void matmul_mod_m6(const u32* A, const u32* B, u32* C,
-                   const PrimeMeta* pm, int K, int B);
+                   const PrimeMeta* pm, int K, int Batch);
 
 void matmul_mod_m8(const u32* A, const u32* B, u32* C,
-                   const PrimeMeta* pm, int K, int B);
+                   const PrimeMeta* pm, int K, int Batch);
 
 void matmul_mod_m10(const u32* A, const u32* B, u32* C,
-                    const PrimeMeta* pm, int K, int B);
+                    const PrimeMeta* pm, int K, int Batch);
 
+#if 0
 // Generic dispatcher
 void matmul_mod(const u32* A, const u32* B, u32* C,
-                const PrimeMeta* pm, int K, int B, int m);
+                const PrimeMeta* pm, int K, int Batch, int m);
 
 // CPU reference implementation
 void matmul_mod_cpu(const u32* A, const u32* B, u32* C,
-                    const PrimeMeta* pm, int K, int B, int m);
+                    const PrimeMeta* pm, int K, int Batch, int m);
+#endif
 
 } // namespace rns
 
