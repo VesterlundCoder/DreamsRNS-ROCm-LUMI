@@ -45,6 +45,11 @@ from .cmf_generator import (
     build_pFq_companion_matrix, write_specs_chunked,
     CMFSpec, FAMILY_CONFIG,
 )
+from .constants import (
+    load_constants, compute_match_digits,
+    match_against_constants, compute_delta_against_constant,
+    CONSTANTS_REGISTRY,
+)
 from .logging import RunLogger, RunManifest
 from .gpu_runner import GpuWalkRunner, check_gpu_availability
 
@@ -69,4 +74,7 @@ __all__ = [
     "build_pFq_companion_matrix", "write_specs_chunked",
     "CMFSpec", "FAMILY_CONFIG",
     "RunLogger", "RunManifest",
+    "load_constants", "compute_match_digits",
+    "match_against_constants", "compute_delta_against_constant",
+    "CONSTANTS_REGISTRY",
 ]
