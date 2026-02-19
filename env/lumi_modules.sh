@@ -17,25 +17,25 @@ echo "=== Loading LUMI-G modules for Dreams-RNS-ROCm ==="
 module --force purge
 
 # Load LUMI software stack (CrayPE + ROCm)
-module load LUMI/23.09
+module load LUMI/25.03
 module load partition/G
 
 # Load ROCm programming environment
 module load PrgEnv-cray
 module load craype-accel-amd-gfx90a
-module load rocm/5.6.1
+module load rocm/6.3.4
 
 # Load Cray Python (includes numpy, scipy, mpi4py built against Cray MPICH)
-module load cray-python/3.10.10
+module load cray-python/3.11.7
 
 # Load CMake for building the RNS-ROCm C++ library
-module load buildtools/23.09
+#module load buildtools/23.09 (We have cmake already.)
 
 # GPU-aware MPI
 export MPICH_GPU_SUPPORT_ENABLED=0  # We don't need GPU-aware MPI for this pipeline
 
 # Ensure hipcc is on PATH
-export PATH=${ROCM_PATH}/bin:${PATH}
+#export PATH=${ROCM_PATH}/bin:${PATH}
 
 # Display loaded modules
 echo ""
