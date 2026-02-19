@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Options
-option(RNS_ENABLE_GPU "Enable GPU (ROCm/HIP) support" ON)
+option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
 option(RNS_ENABLE_TESTS "Enable unit tests" ON)
 option(RNS_ENABLE_EXAMPLES "Enable example programs" ON)
 option(RNS_BUILD_PYTHON "Build Python bindings" OFF)
