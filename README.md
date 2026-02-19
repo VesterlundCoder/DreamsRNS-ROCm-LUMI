@@ -243,10 +243,11 @@ source env/lumi_modules.sh
 mkdir -p rns_rocm_lib/build && cd rns_rocm_lib/build
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=ON \
     -DRNS_ENABLE_GPU=ON \
     -DCMAKE_HIP_ARCHITECTURES=gfx90a \
-    -DCMAKE_CXX_COMPILER=CC \
-    -DCMAKE_HIP_COMPILER=hipcc
+    -DCMAKE_C_COMPILER=cc \
+    -DCMAKE_CXX_COMPILER=CC
 cmake --build . -j 16
 ctest --output-on-failure
 

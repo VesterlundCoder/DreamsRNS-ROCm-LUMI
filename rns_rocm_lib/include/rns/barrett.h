@@ -3,6 +3,8 @@
 
 #include "config.h"
 
+#include <hip/hip_runtime.h>
+
 namespace rns {
 
 // ============================================================================
