@@ -1,4 +1,5 @@
 #include <hip/hip_runtime.h>
+#include <vector>
 #include "rns/rns_walk.h"
 #include "rns/rns_matmul.h"
 
