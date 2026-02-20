@@ -25,6 +25,7 @@ Thumbs.db
 # Outputs (generated at runtime)
 outputs/
 *.jsonl
+!6F5Sweeps/*.jsonl
 *.parquet
 
 # Build artifacts

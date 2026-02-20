@@ -1,0 +1,27 @@
+{
+  "run_id": "PLACEHOLDER_SET_BY_SUBMIT",
+  "created_utc": "PLACEHOLDER",
+  "variant": "B",
+  "cmf_family": "6F5_zeta5",
+  "depths": { "level1": 2000, "level2": 2000 },
+  "pairing_rule": {
+    "n_shifts": 8001,
+    "n_dirs": 100011,
+    "dirs_per_shift": 4883,
+    "stride": 99991,
+    "mix_a": 104729,
+    "mix_b": 12345
+  },
+  "sharding": { "S_BIN": 64, "D_BIN": 1000 },
+  "targets_level1": ["zeta3", "zeta5", "zeta7", "zeta9", "catalan", "pi"],
+  "thresholds": { "pre_score": 1e-8, "hit_residual": 1e-20 },
+  "repro": {
+    "git_commit": "SET_BY_WORKER",
+    "config_hash": "95fe7e107776",
+    "generator": "generate_6f5_tasks.py",
+    "upper_params": ["1", "1", "1", "1", "1", "1"],
+    "lower_params": ["2", "2", "2", "2", "2"],
+    "z": "1",
+    "anchor_value": "zeta(5)"
+  }
+}

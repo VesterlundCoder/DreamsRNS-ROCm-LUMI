@@ -1,0 +1,42 @@
+{
+  "config_hash": "95fe7e107776",
+  "upper": [
+    "1",
+    "1",
+    "1",
+    "1",
+    "1",
+    "1"
+  ],
+  "lower": [
+    "2",
+    "2",
+    "2",
+    "2",
+    "2"
+  ],
+  "z": "1",
+  "n_shifts": 8001,
+  "n_trajectories": 100011,
+  "total_tasks": 800188011,
+  "k_max": 3,
+  "denoms": [
+    1,
+    2,
+    3,
+    4,
+    6,
+    8
+  ],
+  "target_constants": [
+    "zeta3",
+    "zeta5",
+    "zeta7",
+    "zeta9",
+    "catalan",
+    "pi"
+  ],
+  "rank": 5,
+  "dim": 11,
+  "generated_by": "generate_6f5_tasks.py"
+}
