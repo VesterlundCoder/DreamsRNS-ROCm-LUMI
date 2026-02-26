@@ -67,20 +67,21 @@ def compute_shard(s_idx: int, d_idx: int, S_BIN: int, D_BIN: int, N_DIRS: int) -
     return s_shard, d_shard, shard_id
 
 
-def compute_cmf_walk(program, shift, direction, depth) -> Optional[Tuple[float, bool]]:
-    """Run a single CMF walk using the dual-shadow bytecode engine.
+def compute_cmf_walk(program, lcm, shift, direction, depth) -> Optional[Tuple[float, bool]]:
+    """Run a single CMF walk on GPU via the RNS bytecode engine.
 
     Args:
-        program: Compiled bytecode Program from cmf_walk_engine.
+        program: Compiled CmfProgram (rationalized, GPU-ready).
+        lcm: LCM used for shift denominator clearing.
         shift: {'nums': [dim], 'dens': [dim]} rational shift.
         direction: [dim ints] trajectory direction.
         depth: number of walk steps.
 
     Returns:
-        (estimate, confident) or None if both shadows diverge.
+        (estimate, confident) or None if walk diverged.
     """
     from cmf_walk_engine import walk_single
-    return walk_single(program, shift["nums"], shift["dens"], direction, depth)
+    return walk_single(program, lcm, shift["nums"], shift["dens"], direction, depth)
 
 
 def enumerate_pairs_full_shard(ranges: dict) -> List[Tuple[int, int]]:
@@ -201,11 +202,11 @@ def main():
     cmfs = load_jsonl(cmfs_path) if cmfs_path else []
     cmf = next((c for c in cmfs if c.get("cmf_id") == cmf_id), cmfs[0] if cmfs else {})
 
-    # Compile CMF to bytecode (sympy at startup only)
+    # Compile CMF to GPU-ready bytecode (sympy at startup only)
     from cmf_walk_engine import compile_6f5
-    print(f"[L2] Compiling CMF {cmf_id} to bytecode...", flush=True)
-    program = compile_6f5(cmf)
-    print(f"[L2]   rank={program.m} dim={program.dim} instrs={len(program.instrs)}", flush=True)
+    print(f"[L2] Compiling CMF {cmf_id} to GPU bytecode...", flush=True)
+    program, lcm = compile_6f5(cmf)
+    print(f"[L2]   rank={program.m} dim={program.dim} instrs={len(program.instructions)} lcm={lcm}", flush=True)
 
     # Precompute target constants at moderate + high precision (once)
     from precision_engine import precompute_constants
@@ -243,8 +244,8 @@ def main():
         s_shard, d_shard, shard_id = compute_shard(s_idx, d_idx, S_BIN, D_BIN, N_DIRS)
         shard_pairs[(cmf_id, shard_id)] += 1
 
-        # ── COMPUTE WALK (dual-shadow bytecode engine) ──
-        result = compute_cmf_walk(program, shift, direction, depth)
+        # ── COMPUTE WALK (GPU RNS kernel) ──
+        result = compute_cmf_walk(program, lcm, shift, direction, depth)
         if result is None:
             continue
         estimate, confident = result
