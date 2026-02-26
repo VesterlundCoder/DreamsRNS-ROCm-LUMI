@@ -35,63 +35,18 @@ from typing import List, Dict, Tuple, Optional, Any
 AXES_11 = [f"x{i}" for i in range(6)] + [f"y{j}" for j in range(5)]
 
 
-def load_target_constants() -> Dict[str, float]:
-    try:
-        import mpmath as mp
-        mp.mp.dps = 50
-        return {
-            "zeta3": float(mp.zeta(3)),
-            "zeta5": float(mp.zeta(5)),
-            "zeta7": float(mp.zeta(7)),
-            "zeta9": float(mp.zeta(9)),
-            "catalan": float(mp.catalan),
-            "pi": float(mp.pi),
-        }
-    except ImportError:
-        return {
-            "zeta3": 1.2020569031595942,
-            "zeta5": 1.0369277551433699,
-            "zeta7": 1.0083492773819228,
-            "zeta9": 1.0020083928260822,
-            "catalan": 0.9159655941772190,
-            "pi": 3.141592653589793,
-        }
-
-
 def match_against_targets(
     estimate: float,
-    targets: Dict[str, float],
     threshold: float = 1e-8,
 ) -> List[Dict[str, Any]]:
-    hits = []
-    if not math.isfinite(estimate) or estimate == 0.0:
-        return hits
-    for name, val in targets.items():
-        residual = abs(estimate - val)
-        if residual == 0.0:
-            score = 300.0
-        elif residual < threshold:
-            score = -math.log10(residual)
-            hits.append({
-                "target_family": "zeta_basis",
-                "target_const": name,
-                "score": round(score, 2),
-                "residual": f"{residual:.6e}",
-            })
-        if abs(estimate) > 0.5 and abs(val) > 0.5:
-            ratio_est = estimate - 1.0
-            ratio_val = val - 1.0
-            if abs(ratio_val) > 1e-15:
-                ratio_res = abs(ratio_est - ratio_val)
-                if ratio_res < threshold and ratio_res < residual:
-                    ratio_score = -math.log10(ratio_res)
-                    hits.append({
-                        "target_family": "zeta_basis_ratio",
-                        "target_const": name,
-                        "score": round(ratio_score, 2),
-                        "residual": f"{ratio_res:.6e}",
-                    })
-    return hits
+    """Two-step multiprecision matching via precision_engine.
+
+    Stage 1: 120 dps against precomputed constant bank.
+    Stage 2: 500 dps confirmation for near-misses.
+    Falls back to float64 matching if mpmath unavailable.
+    """
+    from precision_engine import match_float_estimate
+    return match_float_estimate(estimate, threshold)
 
 
 def load_jsonl(path: str) -> List[dict]:
@@ -112,8 +67,8 @@ def compute_shard(s_idx: int, d_idx: int, S_BIN: int, D_BIN: int, N_DIRS: int) -
     return s_shard, d_shard, shard_id
 
 
-def compute_cmf_walk(program, shift, direction, depth) -> Optional[float]:
-    """Run a single CMF walk using the bytecode engine.
+def compute_cmf_walk(program, shift, direction, depth) -> Optional[Tuple[float, bool]]:
+    """Run a single CMF walk using the dual-shadow bytecode engine.
 
     Args:
         program: Compiled bytecode Program from cmf_walk_engine.
@@ -122,7 +77,7 @@ def compute_cmf_walk(program, shift, direction, depth) -> Optional[float]:
         depth: number of walk steps.
 
     Returns:
-        float estimate of the limit (p/q), or None if divergent.
+        (estimate, confident) or None if both shadows diverge.
     """
     from cmf_walk_engine import walk_single
     return walk_single(program, shift["nums"], shift["dens"], direction, depth)
@@ -252,11 +207,12 @@ def main():
     program = compile_6f5(cmf)
     print(f"[L2]   rank={program.m} dim={program.dim} instrs={len(program.instrs)}", flush=True)
 
-    # Load only requested target constants
-    all_targets = load_target_constants()
-    targets = {k: v for k, v in all_targets.items() if k in job_targets}
-    if not targets:
-        targets = all_targets  # fallback to all
+    # Precompute target constants at moderate + high precision (once)
+    from precision_engine import precompute_constants
+    print(f"[L2] Precomputing constants at 120 + 500 dps...", flush=True)
+    precompute_constants(120)
+    precompute_constants(500)
+    print(f"[L2]   constants ready", flush=True)
 
     # Enumerate pairs based on mode
     if mode == "full_shard_expansion":
@@ -287,13 +243,14 @@ def main():
         s_shard, d_shard, shard_id = compute_shard(s_idx, d_idx, S_BIN, D_BIN, N_DIRS)
         shard_pairs[(cmf_id, shard_id)] += 1
 
-        # ── COMPUTE WALK (bytecode engine, no sympy) ──
-        estimate = compute_cmf_walk(program, shift, direction, depth)
-        if estimate is None:
+        # ── COMPUTE WALK (dual-shadow bytecode engine) ──
+        result = compute_cmf_walk(program, shift, direction, depth)
+        if result is None:
             continue
+        estimate, confident = result
 
-        # ── MATCH AGAINST TARGETS ──
-        hit_list = match_against_targets(estimate, targets, args.pre_score)
+        # ── MATCH AGAINST TARGETS (two-step: 120 dps → 500 dps) ──
+        hit_list = match_against_targets(estimate, args.pre_score)
         for hit in hit_list:
             n_hits += 1
             hr = {
@@ -307,10 +264,12 @@ def main():
                     "d_shard": d_shard,
                     "shard_id": shard_id,
                 },
-                "target_family": hit["target_family"],
                 "target_const": hit["target_const"],
-                "score": hit["score"],
+                "transform": hit.get("transform", "direct"),
+                "score": hit.get("score", 0),
                 "residual": hit["residual"],
+                "stage": hit.get("stage", 1),
+                "confident": confident,
                 "shift": {"nums": shift["nums"], "dens": shift["dens"]},
                 "trajectory": {"v": direction},
             }

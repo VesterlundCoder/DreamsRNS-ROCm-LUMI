@@ -62,6 +62,6 @@ srun --cpu-bind=${CPU_BIND} \
     --mix_a 104729 \
     --mix_b 12345 \
     --S_BIN 64 --D_BIN 1000 \
-    --pre_score 1e-3
+    --pre_score 5e-3
 
 rm -f "${RUN_DIR}/select_gpu"

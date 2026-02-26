@@ -290,39 +290,67 @@ def walk_single(
     shift_dens: List[int],
     direction: List[int],
     depth: int = 2000,
-) -> Optional[float]:
-    """Run one CMF walk, return the convergent estimate (p/q) or None.
+) -> Optional[Tuple[float, bool]]:
+    """Run one CMF walk with dual-shadow validation.
 
-    shift_nums/shift_dens: per-axis rational shift (len = dim).
-    direction: per-axis integer step direction (len = dim).
+    Two independent float64 product accumulators run with different
+    Frobenius-norm renormalization schedules (every 32 and every 47 steps).
+    If their estimates agree to ~1e-6 relative, the result is confident.
+    Otherwise the result is flagged uncertain (caller should save anyway).
+
+    Returns:
+        (estimate, confident) tuple, or None if both shadows diverge.
+        estimate: float p/q ratio.
+        confident: True if both shadows agree within 1e-6 relative.
     """
     m = prog.m
-    dim = prog.dim
-    P = np.eye(m, dtype=np.float64)
-    log_scale = 0.0
-
     sn = np.array(shift_nums, dtype=np.float64)
     sd = np.array(shift_dens, dtype=np.float64)
     dr = np.array(direction, dtype=np.float64)
-    start = sn / sd  # float64 starting position
+    start = sn / sd
+
+    # Dual shadows with different renormalization cadences
+    P_a = np.eye(m, dtype=np.float64)
+    P_b = np.eye(m, dtype=np.float64)
+    NORM_A, NORM_B = 32, 47  # coprime cadences reduce correlated bias
 
     for step in range(depth):
         axis_vals = start + step * dr
         M = _eval_matrix_float(prog, axis_vals)
-        P = P @ M
-        mx = np.max(np.abs(P))
-        if mx > 1e100:
-            P /= mx
-            log_scale += math.log(mx)
-        elif mx < 1e-100 and mx > 0:
-            P /= mx
-            log_scale += math.log(mx)
+        P_a = P_a @ M
+        P_b = P_b @ M
 
-    p_val = P[0, m - 1]
-    q_val = P[m - 1, m - 1]
-    if abs(q_val) < 1e-300:
+        # Frobenius-norm renormalization (smoother than max-entry)
+        if (step + 1) % NORM_A == 0:
+            fn = np.sqrt(np.sum(P_a * P_a))
+            if fn > 1e-300:
+                P_a /= fn
+        if (step + 1) % NORM_B == 0:
+            fn = np.sqrt(np.sum(P_b * P_b))
+            if fn > 1e-300:
+                P_b /= fn
+
+    # Extract estimates from both shadows
+    qa = P_a[m - 1, m - 1]
+    qb = P_b[m - 1, m - 1]
+    est_a = P_a[0, m - 1] / qa if abs(qa) > 1e-300 else None
+    est_b = P_b[0, m - 1] / qb if abs(qb) > 1e-300 else None
+
+    if est_a is None and est_b is None:
         return None
-    return p_val / q_val
+
+    # Use shadow A as primary, B as cross-check
+    primary = est_a if est_a is not None else est_b
+
+    # Confidence: do both shadows agree?
+    if est_a is not None and est_b is not None:
+        denom = max(abs(est_a), abs(est_b), 1e-15)
+        rel_diff = abs(est_a - est_b) / denom
+        confident = rel_diff < 1e-6
+    else:
+        confident = False
+
+    return (primary, confident)
 
 
 def walk_batch(
@@ -358,8 +386,9 @@ def walk_batch(
         P = np.matmul(P, M)
 
         if (step + 1) % normalize_every == 0:
-            scale = np.max(np.abs(P), axis=(1, 2), keepdims=True)
-            scale = np.where(scale > 0, scale, 1.0)
+            # Frobenius norm per walk (smoother than max-entry)
+            scale = np.sqrt(np.sum(P * P, axis=(1, 2), keepdims=True))
+            scale = np.where(scale > 1e-300, scale, 1.0)
             P = P / scale
 
     p_vals = P[:, 0, m - 1]

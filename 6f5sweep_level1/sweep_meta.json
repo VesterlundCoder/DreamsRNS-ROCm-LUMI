@@ -37,7 +37,7 @@
   ],
   "scalar_multipliers": ["1", "2", "3", "4", "6", "1/2", "1/3", "1/4", "1/6", "1/12"],
   "transforms": ["direct", "neg", "recip", "neg_recip"],
-  "hit_threshold": 1e-3,
+  "hit_threshold": 5e-3,
   "total_target_values": "~230 (23 base x 10 scalars)",
   "rank": 5,
   "dim": 11,

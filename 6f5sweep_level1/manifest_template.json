@@ -19,7 +19,7 @@
                      "sqrt2", "sqrt3", "sqrt5", "phi", "pi_sq", "1/pi", "pi/4"],
   "scalar_multipliers": ["1", "2", "3", "4", "6", "1/2", "1/3", "1/4", "1/6", "1/12"],
   "transforms_checked": ["direct", "neg", "recip", "neg_recip"],
-  "thresholds": { "pre_score": 1e-3, "hit_residual": 1e-20 },
+  "thresholds": { "pre_score": 5e-3, "hit_residual": 1e-20 },
   "repro": {
     "git_commit": "SET_BY_WORKER",
     "config_hash": "95fe7e107776",

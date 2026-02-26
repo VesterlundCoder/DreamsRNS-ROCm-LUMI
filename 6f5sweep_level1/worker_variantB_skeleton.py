@@ -231,9 +231,9 @@ def compute_cmf_walk(
     shift: dict,
     direction: List[int],
     depth: int,
-) -> Optional[float]:
+) -> Optional[Tuple[float, bool]]:
     """
-    Run a single CMF walk using the bytecode engine.
+    Run a single CMF walk using the dual-shadow bytecode engine.
 
     Args:
         program: Compiled bytecode Program from cmf_walk_engine.
@@ -242,7 +242,8 @@ def compute_cmf_walk(
         depth: number of walk steps.
 
     Returns:
-        float estimate of the limit (p/q), or None if divergent.
+        (estimate, confident) or None if both shadows diverge.
+        confident=True means both renormalization schedules agree.
     """
     from cmf_walk_engine import walk_single
     return walk_single(program, shift["nums"], shift["dens"], direction, depth)
@@ -297,8 +298,8 @@ def main():
     ap.add_argument("--mix_b", type=int, default=12345)
     ap.add_argument("--S_BIN", type=int, default=64)
     ap.add_argument("--D_BIN", type=int, default=1000)
-    ap.add_argument("--pre_score", type=float, default=1e-3,
-                    help="Threshold for pre-screening hits (1e-3 = generous Level-1 scouting)")
+    ap.add_argument("--pre_score", type=float, default=5e-3,
+                    help="Threshold for pre-screening hits (5e-3 = wide catch band for Level-1)")
     args = ap.parse_args()
 
     rank = args.rank
@@ -429,10 +430,11 @@ def main():
                 shard_pairs[(cmf_id, shard_id)] += 1
                 n_pairs_total += 1
 
-                # ── COMPUTE WALK (bytecode engine, no sympy) ──
-                estimate = compute_cmf_walk(program, shift, direction, args.depth)
-                if estimate is None:
+                # ── COMPUTE WALK (dual-shadow bytecode engine) ──
+                result = compute_cmf_walk(program, shift, direction, args.depth)
+                if result is None:
                     continue
+                estimate, confident = result
 
                 # ── MATCH AGAINST TARGETS ──
                 hit_list = match_against_targets(estimate, targets, args.pre_score)
@@ -453,10 +455,11 @@ def main():
                         "target_const": hit["target_const"],
                         "score": hit["score"],
                         "residual": hit["residual"],
+                        "confident": confident,
                         "shift": {"nums": shift["nums"], "dens": shift["dens"]},
                         "trajectory": {"v": direction},
                     }
-                    hits_f.write(json.dumps(hr, separators=(",", ":")) + "\n")
+                    hits_f.write(json.dumps(hr, separators=(",",":")) + "\n")
                     hits_f.flush()
 
             # Progress logging every 100 shifts
