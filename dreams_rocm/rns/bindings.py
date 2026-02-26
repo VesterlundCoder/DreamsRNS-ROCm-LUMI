@@ -2,9 +2,7 @@
 ctypes-based Python bindings to the compiled RNS-ROCm shared library.
 
 On LUMI the library is built with CMake / hipcc and produces
-``librns_rocm.so``.  This module loads it at import time if it can
-be found; otherwise falls back to pure-Python implementations in
-``reference.py``.
+``librns_rocm.so``.  GPU is mandatory — no CPU fallback.
 """
 
 import ctypes
@@ -59,10 +57,11 @@ if _lib_path is not None:
         _lib = ctypes.CDLL(str(_lib_path))
         HAS_NATIVE_RNS = True
     except OSError as exc:
+        # On GPU nodes this is a hard error; on dev machines it's expected
         import warnings
         warnings.warn(
             f"Found RNS-ROCm library at {_lib_path} but failed to load: {exc}. "
-            "Using pure-Python fallback.",
+            "GPU execution will not be available.",
             RuntimeWarning,
         )
 
@@ -93,17 +92,32 @@ class RnsContext:
             except Exception:
                 self._native_ctx = None
 
-    # -- native helpers (only if library loaded) ----------------------------
+    # -- native helpers ----------------------------
 
     def _init_native(self):
-        """Placeholder for full ctypes context initialisation.
+        """Initialize the native GPU device context via ctypes.
 
-        A complete binding would call rns::create_context via the C ABI
-        exported from the shared library.  For Test 1 we rely on the
-        pure-Python path and will enable this once the shared library is
-        compiled on LUMI.
+        Calls rns::create_context with the prime array to set up
+        GPU-side modulus data.
         """
-        pass
+        if _lib is None:
+            return
+
+        # Check for create_context C ABI wrapper
+        if hasattr(_lib, 'rns_create_context'):
+            primes_arr = self.primes.copy()
+            ctx_ptr = _lib.rns_create_context(
+                primes_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32)),
+                ctypes.c_int(self.K),
+            )
+            self._native_ctx = ctx_ptr
+        elif hasattr(_lib, 'create_context'):
+            primes_arr = self.primes.copy()
+            ctx_ptr = _lib.create_context(
+                primes_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32)),
+                ctypes.c_int(self.K),
+            )
+            self._native_ctx = ctx_ptr
 
     @property
     def has_gpu(self) -> bool:

@@ -4,8 +4,7 @@ CMF Compiler: Converts symbolic CMF expressions to bytecode programs.
 Ported from Dreams-RNS-CUDA compiler.py with ROCm-compatible output.
 Supports both SymPy matrix input and dictionary-based definition.
 
-The bytecode is evaluated on GPU via the RNS-ROCm bytecode evaluator
-or on CPU via the pure-Python fallback.
+The bytecode is evaluated on GPU via the RNS-ROCm bytecode evaluator.
 """
 
 from enum import IntEnum

@@ -42,15 +42,13 @@ REPO_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 CONTAINER="${REPO_DIR}/dreams_rocm.sif"
 DATA_DIR="${DREAMS_DATA_DIR:-${SCRATCH}/dreams_data}"
 
-# Fallback: if no .sif, use system Python
+# Container is required for GPU execution
 if [ ! -f "${CONTAINER}" ]; then
-    echo "WARNING: Container not found at ${CONTAINER}"
-    echo "         Falling back to module-based Python environment"
-    module load cray-python/3.10.10
-    USE_CONTAINER=0
-else
-    USE_CONTAINER=1
+    echo "ERROR: Container not found at ${CONTAINER}"
+    echo "       Build it first: singularity build dreams_rocm.sif env/dreams_rocm.def"
+    exit 1
 fi
+USE_CONTAINER=1
 
 # Create unique run directory on /scratch
 RUN_ID="run_$(date +%Y%m%d_%H%M%S)_${SLURM_JOB_ID}"

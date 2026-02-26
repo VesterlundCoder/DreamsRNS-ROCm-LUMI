@@ -559,8 +559,8 @@ def run_cmf_walk_batch(
 ) -> List[Dict[str, Any]]:
     """Run B r×r CMF walks, each with per-axis shifts.
 
-    Uses the native RNS-ROCm fused walk kernel when available (GPU path).
-    Falls back to CPU walker otherwise.
+    Uses the native RNS-ROCm fused walk kernel for GPU-accelerated walks.
+    Falls back to numpy reference walker for rational trajectories.
 
     Args:
         program:        compiled CmfProgram (any rank r)
@@ -579,23 +579,19 @@ def run_cmf_walk_batch(
     if shift_val_list is None:
         shift_val_list = [[1] * dim]
 
-    # Try native GPU path (integer shifts only for now)
+    # Use native GPU path for integer shifts when available
     if trajectory_vals is None:
-        try:
-            from .rns.bindings import HAS_NATIVE_RNS
-            if HAS_NATIVE_RNS:
-                # Check if all shifts are plain ints (no rationals)
-                all_int = all(
-                    all(isinstance(v, int) for v in sv)
-                    for sv in shift_val_list
-                )
-                if all_int:
-                    return _run_cmf_walk_batch_native(
-                        program, depth, K, shift_val_list, batch_size)
-        except ImportError:
-            pass
+        from .rns.bindings import HAS_NATIVE_RNS
+        if HAS_NATIVE_RNS:
+            all_int = all(
+                all(isinstance(v, int) for v in sv)
+                for sv in shift_val_list
+            )
+            if all_int:
+                return _run_cmf_walk_batch_native(
+                    program, depth, K, shift_val_list, batch_size)
 
-    # CPU fallback: walk each shift sequentially
+    # Reference path: walk each shift sequentially via numpy
     return [run_cmf_walk(program, depth, K, sv, trajectory_vals=trajectory_vals)
             for sv in shift_val_list]
 

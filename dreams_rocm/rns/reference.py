@@ -1,9 +1,8 @@
 """
 Pure-Python RNS reference implementations.
 
-These serve as:
-1. Ground truth for correctness testing
-2. CPU fallback when the native RNS-ROCm library is unavailable
+These serve as ground truth for correctness testing.
+Production walks use the native RNS-ROCm GPU library.
 
 All operations are exact (integer arithmetic, no floating-point).
 """

@@ -15,6 +15,7 @@ Usage:
     srun -n1 --gpus=1 python scripts/validate_rocm_rns.py  # on compute node
 """
 
+import subprocess
 import sys
 import os
 import time
@@ -45,45 +46,64 @@ def main():
     results = []
 
     # ---------------------------------------------------------------
-    # 1. GPU Detection
+    # 1. GPU Detection (supports both AMD ROCm and NVIDIA CUDA)
     # ---------------------------------------------------------------
-    section("1. GPU / ROCm Detection")
+    section("1. GPU Detection")
 
     gpu_found = False
-    gpu_detail = ""
+    gpu_backend = "none"
 
-    # Check ROCR_VISIBLE_DEVICES
-    rocr_dev = os.environ.get("ROCR_VISIBLE_DEVICES", "not set")
-    print(f"  ROCR_VISIBLE_DEVICES = {rocr_dev}")
-
-    # Try rocm-smi
+    # --- NVIDIA path: try nvidia-smi first ---
     try:
-        import subprocess
-        r = subprocess.run(["rocm-smi", "--showid"], capture_output=True,
-                           text=True, timeout=10)
-        if r.returncode == 0 and "GPU" in r.stdout:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version",
+                            "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
             gpu_found = True
-            gpu_detail = "rocm-smi detected GPU"
-            print(f"  rocm-smi output (first 5 lines):")
-            for line in r.stdout.strip().splitlines()[:5]:
-                print(f"    {line}")
-        else:
-            gpu_detail = f"rocm-smi returned code {r.returncode}"
-    except Exception as e:
-        gpu_detail = f"rocm-smi not available: {e}"
+            gpu_backend = "cuda"
+            gpu_detail = f"nvidia-smi: {r.stdout.strip().splitlines()[0]}"
+            print(f"  nvidia-smi: {r.stdout.strip()}")
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
 
-    results.append(check("GPU detected via rocm-smi", gpu_found, gpu_detail))
+    # --- AMD path: try rocm-smi ---
+    if not gpu_found:
+        rocr_dev = os.environ.get("ROCR_VISIBLE_DEVICES", "not set")
+        print(f"  ROCR_VISIBLE_DEVICES = {rocr_dev}")
+        try:
+            r = subprocess.run(["rocm-smi", "--showid"], capture_output=True,
+                               text=True, timeout=10)
+            if r.returncode == 0 and "GPU" in r.stdout:
+                gpu_found = True
+                gpu_backend = "rocm"
+                gpu_detail = "rocm-smi detected GPU"
+                print(f"  rocm-smi output (first 5 lines):")
+                for line in r.stdout.strip().splitlines()[:5]:
+                    print(f"    {line}")
+            else:
+                gpu_detail = f"rocm-smi returned code {r.returncode}"
+        except Exception as e:
+            gpu_detail = f"rocm-smi not available: {e}"
 
-    # Try HIP Python
-    hip_ok = False
-    try:
-        from hip import hip as hiprt
-        count = hiprt.hipGetDeviceCount()
-        hip_ok = count > 0
-        results.append(check("HIP Python binding", hip_ok,
-                             f"{count} device(s)"))
-    except Exception as e:
-        results.append(check("HIP Python binding", False, str(e)))
+    results.append(check("GPU detected", gpu_found,
+                         f"backend={gpu_backend}, {gpu_detail}" if gpu_found
+                         else "no GPU found via nvidia-smi or rocm-smi"))
+
+    # HIP Python binding (AMD-only; expected to be absent on NVIDIA)
+    if gpu_backend != "cuda":
+        hip_ok = False
+        try:
+            from hip import hip as hiprt
+            count = hiprt.hipGetDeviceCount()
+            hip_ok = count > 0
+            results.append(check("HIP Python binding", hip_ok,
+                                 f"{count} device(s)"))
+        except Exception as e:
+            results.append(check("HIP Python binding", False, str(e)))
+    else:
+        print("  [SKIP] HIP Python binding -- not needed on NVIDIA/CUDA")
 
     # ---------------------------------------------------------------
     # 2. RNS Modular Arithmetic

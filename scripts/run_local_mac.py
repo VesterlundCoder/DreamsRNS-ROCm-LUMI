@@ -2,8 +2,9 @@
 """
 Local Mac test runner for the Dreams-RNS-ROCm pipeline.
 
-Runs a quick PCF verification locally (CPU-only) to validate the pipeline.
-No MPI or GPU required.
+Runs a quick PCF verification locally using the numpy reference walker
+to validate the pipeline before deploying to LUMI-G.
+No MPI or GPU required — this is for correctness testing only.
 
 Usage:
     python scripts/run_local_mac.py

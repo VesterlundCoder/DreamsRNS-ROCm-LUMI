@@ -7,7 +7,8 @@ Implements the correct PCF companion matrix walk matching ramanujantools:
   p = P[0, m-1],  q = P[1, m-1]  (last column)
   delta = -(1 + log|p/q - L| / log|q|)
 
-Supports CPU (numpy) and GPU (ROCm) backends.
+Uses numpy for the K-prime vectorized reference walk.
+For GPU-accelerated walks, use gpu_runner.GpuWalkRunner.
 Ported from the corrected Dreams-RNS-CUDA v0.2.0 runner.py.
 """
 
