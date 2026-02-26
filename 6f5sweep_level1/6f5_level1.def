@@ -1,0 +1,46 @@
+Bootstrap: docker
+From: rocm/dev-ubuntu-22.04:6.0-complete
+
+%labels
+    Author DavidSvensson
+    Description 6F5 Level-1 CMF sweep container for LUMI-G (MI250X)
+    Version 1.0
+
+%post
+    # System packages
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Python packages needed by the worker
+    pip3 install --no-cache-dir \
+        numpy \
+        mpmath \
+        sympy
+
+    # Create app directory
+    mkdir -p /app
+
+%environment
+    export LC_ALL=C
+    export PYTHONUNBUFFERED=1
+
+%runscript
+    exec python3 "$@"
+
+%help
+    6F5 Level-1 CMF sweep container for LUMI-G.
+
+    This container provides the Python runtime (numpy, mpmath) for running
+    the Level-1 Variant-B sweep worker on LUMI's MI250X GPUs.
+
+    Scripts and data are bind-mounted from the project filesystem, not
+    baked into the container. This allows updating scripts without
+    rebuilding the container.
+
+    Build:
+        singularity build 6f5-level1.sif 6f5_level1.def
+
+    Usage (inside sbatch):
+        singularity exec -B /projappl/project_465002669 6f5-level1.sif \
+            python3 worker_variantB_skeleton.py --run_dir ... --rank ...

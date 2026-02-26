@@ -1,0 +1,13 @@
+{
+  "n_shifts": 8001,
+  "n_dirs": 100011,
+  "dirs_per_shift": 4883,
+  "dir_index_rule": "d = ((a*s + b) mod n_dirs + k*stride) mod n_dirs, k=0..dirs_per_shift-1",
+  "a": 104729,
+  "b": 12345,
+  "stride": 99991,
+  "s_interval": [0, 8000],
+  "d_interval": [0, 100010],
+  "total_pairs_level1": 39064883,
+  "note": "Level-1 tests ~39M pairs (4.88% of 800M). Level-2 does full shard expansion on hit shards."
+}
