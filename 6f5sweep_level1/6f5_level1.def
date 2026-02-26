@@ -2,7 +2,7 @@ Bootstrap: docker
 From: rocm/dev-ubuntu-22.04:6.0-complete
 
 %labels
-    Author DavidSvensson
+    Author DavidVesterlund
     Description 6F5 Level-1 CMF sweep container for LUMI-G (MI250X)
     Version 1.0
 
