@@ -228,25 +228,26 @@ def load_cmfs(path: str) -> List[dict]:
 
 def compute_cmf_walk(
     program,
+    lcm: int,
     shift: dict,
     direction: List[int],
     depth: int,
 ) -> Optional[Tuple[float, bool]]:
     """
-    Run a single CMF walk using the dual-shadow bytecode engine.
+    Run a single CMF walk on GPU via the RNS bytecode engine.
 
     Args:
-        program: Compiled bytecode Program from cmf_walk_engine.
+        program: Compiled CmfProgram (rationalized, GPU-ready).
+        lcm: LCM used for shift denominator clearing.
         shift: {'nums': [dim], 'dens': [dim]} rational shift.
         direction: [dim ints] trajectory direction.
         depth: number of walk steps.
 
     Returns:
-        (estimate, confident) or None if both shadows diverge.
-        confident=True means both renormalization schedules agree.
+        (estimate, confident) or None if walk diverged.
     """
     from cmf_walk_engine import walk_single
-    return walk_single(program, shift["nums"], shift["dens"], direction, depth)
+    return walk_single(program, lcm, shift["nums"], shift["dens"], direction, depth)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -335,16 +336,16 @@ def main():
     cmfs = load_cmfs(args.cmfs_jsonl)
     log(f"  {len(cmfs)} CMFs loaded")
 
-    # Compile CMF to bytecode (sympy at startup only, fast thereafter)
+    # Compile CMF to GPU-ready bytecode (sympy at startup only)
     from cmf_walk_engine import compile_6f5
-    compiled_programs = {}
+    compiled_programs = {}  # cmf_id -> (CmfProgram, lcm)
     for cmf in cmfs:
         cid = cmf.get("cmf_id", "cmf_unknown")
-        log(f"  Compiling CMF {cid} to bytecode...")
-        compiled_programs[cid] = compile_6f5(cmf)
-        prog = compiled_programs[cid]
-        log(f"    rank={prog.m} dim={prog.dim} instrs={len(prog.instrs)} "
-            f"regs={prog.n_reg} consts={len(prog.consts)}")
+        log(f"  Compiling CMF {cid} to GPU bytecode...")
+        prog, lcm = compile_6f5(cmf)
+        compiled_programs[cid] = (prog, lcm)
+        log(f"    rank={prog.m} dim={prog.dim} instrs={len(prog.instructions)} "
+            f"regs={prog.n_reg} consts={len(prog.constants)} lcm={lcm}")
 
     # Load target constants (expanded bank: 23 base × 10 scalars = ~230 targets)
     targets = load_target_constants()
@@ -410,8 +411,8 @@ def main():
 
     for cmf in cmfs:
         cmf_id = cmf.get("cmf_id", "cmf_unknown")
-        program = compiled_programs[cmf_id]
-        log(f"Processing CMF: {cmf_id} (bytecode engine, depth={args.depth})")
+        program, lcm = compiled_programs[cmf_id]
+        log(f"Processing CMF: {cmf_id} (GPU RNS engine, depth={args.depth})")
 
         for si_count, s_idx in enumerate(my_shift_indices):
             shift = shifts[s_idx]
@@ -430,8 +431,8 @@ def main():
                 shard_pairs[(cmf_id, shard_id)] += 1
                 n_pairs_total += 1
 
-                # ── COMPUTE WALK (dual-shadow bytecode engine) ──
-                result = compute_cmf_walk(program, shift, direction, args.depth)
+                # ── COMPUTE WALK (GPU RNS kernel) ──
+                result = compute_cmf_walk(program, lcm, shift, direction, args.depth)
                 if result is None:
                     continue
                 estimate, confident = result
